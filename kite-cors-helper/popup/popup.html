@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Kite Local Screener</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <header>
+      <div>
+        <div class="eyebrow">Kite Local Screener</div>
+        <h1>Local Screener</h1>
+      </div>
+      <label class="switch master">
+        <input id="master-toggle" type="checkbox" checked />
+        <span></span>
+      </label>
+    </header>
+
+    <p class="hint">
+      Active only on <strong>/local-screener</strong>. Uses your normal Kite login and cookies automatically.
+    </p>
+
+    <button id="open-local-screener" type="button" class="primary wide">
+      Open https://kite.zerodha.com/local-screener
+    </button>
+
+    <p class="hint rebuild">
+      After code changes, run <code>npm run build:extension</code> in <code>kite-screener</code>, then reload this extension.
+    </p>
+
+    <script src="popup.js"></script>
+  </body>
+</html>
