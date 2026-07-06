@@ -2,6 +2,27 @@
 
 Chrome extension + React screener injected into Kite at `https://kite.zerodha.com/local-screener`.
 
+![Screener with chart, fundamentals, and order ticket](docs/screenshots/screener-chart-detail.png)
+
+Watchlists, screeners, live charts, fundamentals, market depth, and order placement — inside your existing Kite session.
+
+## Screenshots
+
+### Dashboard
+Indices, top gainers/losers, sector heatmap, and sector screener in one view.
+
+![Dashboard](docs/screenshots/dashboard.png)
+
+### Top gainers screener
+Screener results with chart, fundamentals, price trend, and trade panel.
+
+![Top gainers screener](docs/screenshots/screener-top-gainers.png)
+
+### Stock detail
+Chart, fundamentals, depth, and order ticket for a selected symbol.
+
+![Stock detail](docs/screenshots/screener-chart-detail.png)
+
 ## Layout
 
 - `kite-screener/` — React app source
