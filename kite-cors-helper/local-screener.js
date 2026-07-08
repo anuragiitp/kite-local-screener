@@ -29,6 +29,28 @@ if (!location.pathname.startsWith('/local-screener')) {
       return;
     }
 
+    if (data.type === 'mfFetch') {
+      chrome.runtime.sendMessage({
+        type: 'mfFetch',
+        url: data.url,
+        accept: data.accept,
+      }, (response) => {
+        window.postMessage(
+          {
+            source: 'kite-screener-bridge',
+            type: 'mfFetch',
+            id: data.id,
+            ok: Boolean(response?.ok),
+            status: response?.status ?? 0,
+            text: response?.text || '',
+            error: response?.error || (chrome.runtime.lastError?.message ?? ''),
+          },
+          '*',
+        );
+      });
+      return;
+    }
+
     if (data.type === 'getInstrumentToken') {
       chrome.runtime.sendMessage({
         type: 'getInstrumentToken',
