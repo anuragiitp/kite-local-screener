@@ -5,6 +5,27 @@ const LOCAL_SCREENER_URL = `https://kite.zerodha.com${LOCAL_SCREENER_PATH}`;
 const ENABLED_KEY = 'kite-local-screener-enabled';
 const INSTRUMENT_CSV_URL = 'https://api.kite.trade/instruments';
 
+// Hosts the mutual-fund data proxy is allowed to fetch. The app runs in the
+// MAIN world on kite.zerodha.com, so cross-origin fetches to these public data
+// sources are blocked by CORS there — we proxy them through the service worker.
+const MF_PROXY_HOSTS = new Set(['www.amfiindia.com', 'portal.amfiindia.com', 'api.mfapi.in']);
+
+async function proxyMfFetch(rawUrl, accept) {
+  const url = new URL(rawUrl);
+  if (url.protocol !== 'https:' || !MF_PROXY_HOSTS.has(url.hostname)) {
+    throw new Error(`MF proxy host not allowed: ${url.hostname}`);
+  }
+
+  const response = await fetch(url.toString(), {
+    method: 'GET',
+    credentials: 'omit',
+    headers: { accept: accept || '*/*' },
+  });
+
+  const text = await response.text();
+  return { status: response.status, ok: response.ok, text };
+}
+
 let instrumentTokenMap = null;
 let instrumentTokenLoadPromise = null;
 
@@ -104,6 +125,23 @@ function isLocalScreenerUrl(urlString) {
 
 async function injectLocalScreener(tabId) {
   if (!(await isEnabled())) return;
+
+  // Both webNavigation.onCompleted and the content script's activation message
+  // can fire for the same page load. Injecting app.js twice into the MAIN world
+  // re-declares its top-level identifiers ("Identifier '…' has already been
+  // declared"). Set an atomic in-page flag first and bail if it is already set —
+  // page JS is single-threaded, so the two guard funcs cannot interleave.
+  const [{ result: alreadyInjected } = {}] = await chrome.scripting.executeScript({
+    target: { tabId },
+    world: 'MAIN',
+    func: () => {
+      if (window.__kiteLocalScreenerInjected) return true;
+      window.__kiteLocalScreenerInjected = true;
+      return false;
+    },
+  });
+
+  if (alreadyInjected) return;
 
   await chrome.scripting.executeScript({
     target: { tabId },
@@ -209,6 +247,16 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         sendResponse({ ok: true, token: token || null });
       } catch (error) {
         sendResponse({ ok: false, token: null, error: error?.message || 'Instrument lookup failed' });
+      }
+      return;
+    }
+
+    if (message.type === 'mfFetch') {
+      try {
+        const result = await proxyMfFetch(message.url, message.accept);
+        sendResponse({ ok: result.ok, status: result.status, text: result.text });
+      } catch (error) {
+        sendResponse({ ok: false, error: error?.message || 'MF fetch failed' });
       }
       return;
     }
