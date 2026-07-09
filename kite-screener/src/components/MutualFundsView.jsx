@@ -9,6 +9,7 @@ import {
 import { fetchMfHoldings, hasSession } from '../screener/kiteApi';
 import MfNavChart from './MfNavChart';
 import MfCompareModal from './MfCompareModal';
+import MfInsightsModal from './MfInsightsModal';
 
 // One-click screens. Each is category-specific so the filtered set stays small
 // enough for trailing returns to auto-load.
@@ -113,6 +114,7 @@ export default function MutualFundsView({
 
   const [compare, setCompare] = useState([]);
   const [compareOpen, setCompareOpen] = useState(false);
+  const [insightsOpen, setInsightsOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -736,6 +738,15 @@ export default function MutualFundsView({
                 >
                   {inCompare(selected) ? '− Comparing' : '+ Compare'}
                 </button>
+                <button
+                  type="button"
+                  className="mf-detail-btn mf-detail-btn-insights"
+                  onClick={() => setInsightsOpen(true)}
+                  disabled={!selected.isin}
+                  title={selected.isin ? 'Deep-dive: ratings, holdings, risk & peers' : 'No ISIN available for this scheme'}
+                >
+                  ◈ Insights
+                </button>
               </div>
             </div>
 
@@ -775,6 +786,10 @@ export default function MutualFundsView({
           </>
         )}
       </aside>
+
+      {insightsOpen && selected && (
+        <MfInsightsModal scheme={selected} onClose={() => setInsightsOpen(false)} />
+      )}
 
       {compareOpen && compare.length > 0 && (
         <MfCompareModal

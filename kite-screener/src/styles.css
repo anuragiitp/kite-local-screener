@@ -3649,3 +3649,279 @@ tr.row-drop-target td {
   font-size: 9.5px;
   font-variant-numeric: tabular-nums;
 }
+
+/* ---- Mutual fund insights modal ---- */
+.mf-detail-btn-insights {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.mf-detail-btn-insights:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.mfi-panel {
+  width: min(920px, 96vw);
+  height: min(88vh, 900px);
+}
+
+.mfi-head-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.mfi-stars {
+  color: #f0a202;
+  letter-spacing: 1px;
+}
+
+.mfi-stars-empty {
+  color: #d7dbe3;
+}
+
+.mfi-tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 12px;
+  border-bottom: 1px solid #e8ebf2;
+  background: #fff;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+.mfi-tab {
+  padding: 5px 12px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: #5a6478;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.mfi-tab:hover {
+  background: #f2f4f9;
+}
+
+.mfi-tab.active {
+  background: var(--accent);
+  color: #fff;
+}
+
+.mfi-tabs-spacer {
+  flex: 1 1 auto;
+}
+
+.mfi-links {
+  display: inline-flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.mfi-link {
+  font-size: 11px;
+  color: #6b7280;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.mfi-link:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.mfi-content {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 14px 16px;
+  background: #fafbfd;
+}
+
+.mfi-state {
+  padding: 40px 0;
+  text-align: center;
+  color: #7a8499;
+  font-size: 13px;
+}
+
+.mfi-error {
+  color: var(--down);
+}
+
+.mfi-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.mfi-split {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px;
+  align-items: start;
+}
+
+.mfi-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.mfi-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border: 1px solid #eef0f6;
+  border-radius: 10px;
+  background: #fff;
+}
+
+.mfi-stat-label {
+  font-size: 10px;
+  color: #8a92a3;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.mfi-stat-value {
+  font-size: 13px;
+  font-weight: 700;
+  color: #1f2430;
+  font-variant-numeric: tabular-nums;
+}
+
+.mfi-line {
+  display: flex;
+  gap: 8px;
+  font-size: 12px;
+  color: #3a4150;
+}
+
+.mfi-line-label {
+  flex: 0 0 92px;
+  color: #8a92a3;
+  font-weight: 600;
+}
+
+.mfi-subhead {
+  margin: 4px 0 0;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #6b7280;
+}
+
+.mfi-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.mfi-bar-row {
+  display: grid;
+  grid-template-columns: 52px 1fr 48px;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+}
+
+.mfi-bar-label {
+  color: #5a6478;
+}
+
+.mfi-bar-track {
+  height: 8px;
+  border-radius: 999px;
+  background: #eef1f7;
+  overflow: hidden;
+}
+
+.mfi-bar-fill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--accent);
+}
+
+.mfi-bar-val {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: #1f2430;
+  font-weight: 600;
+}
+
+.mfi-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11.5px;
+}
+
+.mfi-table th,
+.mfi-table td {
+  padding: 5px 8px;
+  border-bottom: 1px solid #eef0f6;
+  text-align: left;
+}
+
+.mfi-table th {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: #8a92a3;
+  background: #fff;
+  position: sticky;
+  top: 0;
+}
+
+.mfi-table .mfi-num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.mfi-verdict {
+  font-size: 10.5px;
+  color: #5a6478;
+}
+
+.mfi-ellipsis {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mfi-note {
+  margin: 2px 0 0;
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: #9aa2b1;
+}
+
+.mfi-foot {
+  flex-shrink: 0;
+  padding: 8px 16px;
+  border-top: 1px solid #e8ebf2;
+  background: #fafbfd;
+  font-size: 10px;
+  color: #9aa2b1;
+}
+
+@media (max-width: 720px) {
+  .mfi-stat-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .mfi-split {
+    grid-template-columns: 1fr;
+  }
+}

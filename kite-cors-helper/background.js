@@ -12,7 +12,7 @@ const ENABLED_KEY = 'kite-local-screener-enabled';
 // Hosts the mutual-fund data proxy is allowed to fetch. The app runs in the
 // MAIN world on kite.zerodha.com, so cross-origin fetches to these public data
 // sources are blocked by CORS there — we proxy them through the service worker.
-const MF_PROXY_HOSTS = new Set(['www.amfiindia.com', 'portal.amfiindia.com', 'api.mfapi.in']);
+const MF_PROXY_HOSTS = new Set(['www.amfiindia.com', 'portal.amfiindia.com', 'api.mfapi.in', 'finapi.upvaly.com']);
 
 async function proxyMfFetch(rawUrl, accept) {
   const url = new URL(rawUrl);
