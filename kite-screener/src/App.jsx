@@ -12,7 +12,6 @@ import {
   fetchMoreRows,
   fetchHoldings,
   fetchPositions,
-  fetchQuotes,
   fetchUpToRows,
   hasSession,
   isKiteEmbedded,
@@ -28,11 +27,19 @@ import {
   normalizeBookmark,
   resolveInstrumentToken,
   saveBookmarks,
+  stripFabricatedTokens,
   toggleBookmarkEntry,
   addBookmarkEntry,
   reorderBookmarks,
 } from './screener/bookmarks';
 import { loadInstrumentIndex } from './screener/instruments';
+import { ETF_WATCHLIST_ITEMS } from './screener/etfWatchlistData';
+import { warmInstrumentDumpCache } from './screener/instrumentDumpCache';
+import {
+  entryNeedsTokenRefresh,
+  resolveInstrumentTokensBulk,
+  warmScreenerTokenCache,
+} from './screener/screenerTokenCache';
 import {
   MAX_WATCHLISTS,
   createWatchlist,
@@ -86,10 +93,52 @@ function addToWatchlistLocal(lists, id, entry) {
   });
 }
 
+const FABRICATED_TOKEN_FIX_FLAG = 'kite-screener-token-fix-v3';
+
+/** Trusted real tokens for symbols missing from the screener (ETFs, indices). */
+function buildTrustedTokenMap() {
+  const map = new Map();
+  const add = (entry) => {
+    const token = Number(entry?.instrument_token);
+    if (!entry?.tradingsymbol || !Number.isFinite(token) || token <= 0) return;
+    map.set(bookmarkKey(entry), token);
+  };
+  ETF_WATCHLIST_ITEMS.forEach(add);
+  INDEX_SHORTCUTS.forEach((item) => add({
+    tradingsymbol: item.tradingsymbol,
+    exchange: item.exchange,
+    segment: item.segment,
+    instrument_token: item.instrument_token,
+  }));
+  return map;
+}
+
 function initStorage() {
-  const watchlists = loadWatchlists();
-  const bookmarks = loadBookmarks();
-  const hiddenSymbols = loadHiddenSymbols();
+  let watchlists = loadWatchlists();
+  let bookmarks = loadBookmarks();
+  let hiddenSymbols = loadHiddenSymbols();
+
+  if (!localStorage.getItem(FABRICATED_TOKEN_FIX_FLAG)) {
+    const trustedTokens = buildTrustedTokenMap();
+
+    const fixedBookmarks = stripFabricatedTokens(bookmarks, trustedTokens);
+    if (fixedBookmarks.changed) bookmarks = fixedBookmarks.entries;
+
+    const fixedHidden = stripFabricatedTokens(hiddenSymbols, trustedTokens);
+    if (fixedHidden.changed) hiddenSymbols = fixedHidden.entries;
+
+    let watchlistsChanged = false;
+    watchlists = watchlists.map((list) => {
+      const fixed = stripFabricatedTokens(list.items, trustedTokens);
+      if (!fixed.changed) return list;
+      watchlistsChanged = true;
+      return { ...list, items: fixed.entries };
+    });
+    if (watchlistsChanged) saveWatchlists(watchlists);
+
+    localStorage.setItem(FABRICATED_TOKEN_FIX_FLAG, '1');
+  }
+
   saveBookmarks(bookmarks);
   saveHiddenSymbols(hiddenSymbols);
 
@@ -127,7 +176,6 @@ export default function App() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState('');
   const [refreshKey, setRefreshKey] = useState(0);
-  const [quotes, setQuotes] = useState({});
   const [quotesLoading, setQuotesLoading] = useState(false);
   const [quoteRefreshKey, setQuoteRefreshKey] = useState(0);
   const [liveTicks, setLiveTicks] = useState({});
@@ -137,6 +185,7 @@ export default function App() {
   const tickBufferRef = useRef(new Map());
   const visibleTokenSetRef = useRef(new Set());
   const connectGenRef = useRef(0);
+  const tokenBootstrapGenRef = useRef(0);
   const mountedRef = useRef(true);
 
   const isDashboardView = activeScreenerId === DASHBOARD_SCREENER_ID;
@@ -226,28 +275,56 @@ export default function App() {
 
     if (isInActiveList(entry)) return;
 
-    try {
-      const token = await resolveInstrumentToken(entry);
-      if (token) entry.instrument_token = token;
-    } catch {
-      // keep entry without token; screener quote fallback still works for equities
-    }
+    const entryKey = bookmarkKey(entry);
 
     if (isBookmarksView) {
       persistBookmarks(addBookmarkEntry(bookmarks, entry));
+    } else if (isHiddenView) {
+      return;
+    } else if (isWatchlistView && activeWatchlistId) {
+      setWatchlists((current) => {
+        const next = addToWatchlistLocal(current, activeWatchlistId, entry);
+        if (next === current) return current;
+        saveWatchlists(next);
+        return next;
+      });
+    } else {
       return;
     }
 
-    if (isHiddenView) return;
+    if (hasValidInstrumentToken(entry) && !entryNeedsTokenRefresh(entry)) return;
 
-    if (!isWatchlistView || !activeWatchlistId) return;
+    try {
+      const token = await resolveInstrumentToken(entry);
+      if (!token) return;
 
-    setWatchlists((current) => {
-      const next = addToWatchlistLocal(current, activeWatchlistId, entry);
-      if (next === current) return current;
-      saveWatchlists(next);
-      return next;
-    });
+      if (isBookmarksView) {
+        setBookmarks((current) => {
+          const next = current.map((row) => (
+            bookmarkKey(row) === entryKey ? { ...row, instrument_token: token } : row
+          ));
+          saveBookmarks(next);
+          return next;
+        });
+        return;
+      }
+
+      if (!isWatchlistView || !activeWatchlistId) return;
+
+      setWatchlists((current) => {
+        const next = current.map((list) => {
+          if (list.id !== activeWatchlistId) return list;
+          const items = list.items.map((row) => (
+            bookmarkKey(row) === entryKey ? { ...row, instrument_token: token } : row
+          ));
+          return { ...list, items };
+        });
+        saveWatchlists(next);
+        return next;
+      });
+    } catch {
+      // keep entry without token; screener quote fallback still works for equities
+    }
   }, [
     isBookmarksView,
     isHiddenView,
@@ -287,6 +364,41 @@ export default function App() {
       setSelectedRow(null);
     }
   }, [activeWatchlistId, watchlists, persistWatchlists, selectedRow]);
+
+  const persistInstrumentToken = useCallback((entry, token) => {
+    const normalized = normalizeBookmark(entry);
+    if (!normalized.tradingsymbol || !token) return;
+
+    const resolved = {
+      [bookmarkKey(normalized)]: {
+        instrument_token: Number(token),
+        segment: normalized.segment || normalized.exchange || 'NSE',
+      },
+    };
+
+    if (isBookmarksView) {
+      setBookmarks((current) => {
+        const next = applyResolvedEntries(current, resolved);
+        if (next !== current) saveBookmarks(next);
+        return next;
+      });
+      return;
+    }
+
+    if (!isWatchlistView || !activeWatchlistId) return;
+
+    setWatchlists((current) => {
+      const list = current.find((item) => item.id === activeWatchlistId);
+      if (!list) return current;
+      const nextItems = applyResolvedEntries(list.items, resolved);
+      if (nextItems === list.items) return current;
+      const next = current.map((item) => (
+        item.id === activeWatchlistId ? { ...item, items: nextItems } : item
+      ));
+      saveWatchlists(next);
+      return next;
+    });
+  }, [isBookmarksView, isWatchlistView, activeWatchlistId]);
 
   const reorderBookmarkRows = useCallback((fromIndex, toIndex) => {
     persistBookmarks(reorderBookmarks(bookmarks, fromIndex, toIndex));
@@ -339,8 +451,8 @@ export default function App() {
   }, [isBookmarksView, isHiddenView, isWatchlistView, activeScreenerId, activeWatchlist]);
 
   const listRows = useMemo(
-    () => bookmarksToRows(activeListItems, quotes),
-    [activeListItems, quotes],
+    () => bookmarksToRows(activeListItems),
+    [activeListItems],
   );
 
   const baseRows = isListView ? listRows : rows;
@@ -511,29 +623,29 @@ export default function App() {
 
   useEffect(() => {
     if (!embedded || !hasSession() || !isListView || activeListItems.length === 0) {
-      setQuotes({});
       return undefined;
     }
 
-    const entriesNeedingBootstrap = activeListItems.filter((item) => {
-      if (item?.type === 'separator') return false;
-      return !hasValidInstrumentToken(item);
-    });
+    const gen = tokenBootstrapGenRef.current + 1;
+    tokenBootstrapGenRef.current = gen;
 
-    if (entriesNeedingBootstrap.length === 0) {
-      setQuotes({});
-      setQuotesLoading(false);
-      return undefined;
-    }
-
-    const controller = new AbortController();
-
-    // Resolve tokens only for entries missing a valid token. Live prices come from websocket.
     setQuotesLoading(true);
-    fetchQuotes(entriesNeedingBootstrap, controller.signal)
-      .then(({ quotes: data, resolved }) => {
-        setQuotes(data);
 
+    (async () => {
+      try {
+        await warmScreenerTokenCache();
+        await warmInstrumentDumpCache();
+        if (gen !== tokenBootstrapGenRef.current) return;
+
+        const entriesNeedingBootstrap = activeListItems.filter((item) => {
+          if (item?.type === 'separator') return false;
+          return entryNeedsTokenRefresh(item);
+        });
+
+        if (!entriesNeedingBootstrap.length) return;
+
+        const resolved = await resolveInstrumentTokensBulk(entriesNeedingBootstrap);
+        if (gen !== tokenBootstrapGenRef.current) return;
         if (!resolved || !Object.keys(resolved).length) return;
 
         if (isBookmarksView) {
@@ -560,17 +672,18 @@ export default function App() {
           saveWatchlists(next);
           return next;
         });
-      })
-      .catch((fetchError) => {
-        if (fetchError.name !== 'AbortError') setQuotes({});
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) setQuotesLoading(false);
-      });
+      } catch {
+        // token bootstrap failed — retry on next load or row click
+      } finally {
+        if (gen === tokenBootstrapGenRef.current) setQuotesLoading(false);
+      }
+    })();
 
-    return () => controller.abort();
+    return () => {
+      tokenBootstrapGenRef.current += 1;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [embedded, isListView, activeListItemsKey, quoteRefreshKey]);
+  }, [embedded, isListView, activeListItems, quoteRefreshKey]);
 
   useEffect(() => {
     if (!isListView || displayRows.length === 0) return;
@@ -597,11 +710,13 @@ export default function App() {
     };
   }, []);
 
-  // Warm instruments.json once at startup; kept in memory for search + token lookup.
+  // Warm instrument search index + screener token cache once at startup.
   useEffect(() => {
     if (!embedded) return undefined;
     const controller = new AbortController();
     loadInstrumentIndex(controller.signal).catch(() => {});
+    warmScreenerTokenCache(controller.signal).catch(() => {});
+    warmInstrumentDumpCache().catch(() => {});
     return () => controller.abort();
   }, [embedded]);
 
@@ -807,7 +922,7 @@ export default function App() {
               onVisibleTokens={setPositionsTokens}
               onCountsChange={handlePortfolioCounts}
             />
-            <ChartPanel row={selectedRowLive} />
+            <ChartPanel row={selectedRowLive} onInstrumentTokenResolved={persistInstrumentToken} />
           </>
         ) : (
           <>
@@ -851,7 +966,7 @@ export default function App() {
               onRefresh={isListView ? refreshListQuotes : refreshScreenerData}
             />
 
-            <ChartPanel row={selectedRowLive} />
+            <ChartPanel row={selectedRowLive} onInstrumentTokenResolved={persistInstrumentToken} />
           </>
         )}
       </div>

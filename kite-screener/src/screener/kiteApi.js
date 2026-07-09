@@ -1,5 +1,5 @@
-import { loadInstrumentIndex, lookupInstrumentTokenFromIndex } from './instruments';
-import { lookupInstrumentToken } from './instrumentTokens';
+import { lookupTokenFromScreenerCache, warmScreenerTokenCache } from './screenerTokenCache';
+import { parseInstrumentToken } from './instrumentToken';
 
 const API_URL = '/screener/instruments';
 
@@ -8,10 +8,8 @@ export const TARGET_ROWS_DEFAULT = 500;
 // silently treated as the tiny default (~20 rows), which forces many more
 // requests. Requesting exactly 100 returns a full page and minimizes calls.
 export const BATCH_SIZE = 100;
-export const QUOTE_BATCH_SIZE = 500;
 export const MAX_HISTORICAL_DAYS = 2000;
 export const MAX_HISTORICAL_CHUNKS = 15;
-const SCREENER_QUOTE_DELAY_MS = 80;
 const SCREENER_MAX_CONCURRENT = 4;
 const SCREENER_MIN_GAP_MS = 50;
 
@@ -284,22 +282,8 @@ export function getUserId() {
   return readCookie('user_id') || readStoreJs('__storejs_kite_user_id');
 }
 
-function quoteKey(entry) {
-  const exchange = entry?.exchange || entry?.segment || 'NSE';
-  const symbol = (entry?.tradingsymbol || entry?.symbol || '').trim();
-  return `${exchange}:${symbol}`;
-}
-
 function symbolsMatch(left, right) {
   return String(left || '').trim().toUpperCase() === String(right || '').trim().toUpperCase();
-}
-
-function isLikelyBogusToken(token, entry) {
-  const n = Number(token);
-  if (!Number.isFinite(n) || n <= 0) return false;
-  const segment = (entry?.segment || entry?.exchange || '').toUpperCase();
-  if (segment === 'INDICES') return false;
-  return n < 100000;
 }
 
 function segmentsToTry(entry) {
@@ -307,14 +291,19 @@ function segmentsToTry(entry) {
   return [...new Set([primary, 'NSE', 'BSE'].filter((segment) => segment && segment !== 'INDICES'))];
 }
 
-function numOrNull(value) {
-  const n = Number(value);
-  return Number.isFinite(n) ? n : null;
-}
-
 async function fetchQuoteRow(entry, signal) {
   const symbol = String(entry?.tradingsymbol || entry?.symbol || '').trim();
   if (!symbol) return { row: null, token: null };
+
+  try {
+    await warmScreenerTokenCache(signal);
+    const cached = lookupTokenFromScreenerCache(entry);
+    if (cached) {
+      return { row: null, token: cached };
+    }
+  } catch {
+    // cache not ready — fall through to per-symbol screener lookup
+  }
 
   for (const segment of segmentsToTry(entry)) {
     try {
@@ -332,8 +321,8 @@ async function fetchQuoteRow(entry, signal) {
     }
   }
 
-  const token = entry?.instrument_token || entry?.token;
-  if (token && !isLikelyBogusToken(token, entry)) {
+  const token = parseInstrumentToken(entry?.instrument_token || entry?.token);
+  if (token) {
     try {
       const page = await fetchScreener(
         { query: `instrument_token = ${token}`, limit: 1, offset: 0 },
@@ -348,38 +337,6 @@ async function fetchQuoteRow(entry, signal) {
     }
   }
 
-  let csvToken = null;
-  try {
-    await loadInstrumentIndex(signal);
-    csvToken = lookupInstrumentTokenFromIndex(entry);
-  } catch {
-    csvToken = null;
-  }
-
-  if (!csvToken) {
-    try {
-      csvToken = await lookupInstrumentToken(entry, signal);
-    } catch {
-      csvToken = null;
-    }
-  }
-
-  if (csvToken) {
-    try {
-      const page = await fetchScreener(
-        { query: `instrument_token = ${csvToken}`, limit: 1, offset: 0 },
-        signal,
-      );
-      const row = page.rows?.[0];
-      if (row && symbolsMatch(row.tradingsymbol, symbol)) {
-        return { row, token: Number(row.instrument_token || csvToken) };
-      }
-    } catch {
-      // screener may not return ETF rows — still keep token for websocket/chart
-    }
-    return { row: null, token: csvToken };
-  }
-
   return { row: null, token: null };
 }
 
@@ -387,76 +344,6 @@ async function fetchQuoteRow(entry, signal) {
 export async function fetchInstrumentRow(entry, signal) {
   const { row } = await fetchQuoteRow(entry, signal);
   return row;
-}
-
-// The internal /oms/quote endpoint is gated for web (enctoken) sessions and
-// always returns "Bad Request". The screener endpoint exposes the same live
-// price fields and works with the CSRF/public_token session, so we look each
-// bookmark up individually (the screener query language has no OR/IN operator).
-export async function fetchQuotes(bookmarks, signal) {
-  const list = (bookmarks || []).filter(
-    (entry) => entry && (entry.tradingsymbol || entry.symbol || entry.instrument_token || entry.token),
-  );
-  if (!list.length) return { quotes: {}, resolved: {} };
-
-  const quotes = {};
-  const resolved = {};
-  for (let index = 0; index < list.length; index += 1) {
-    const entry = list[index];
-    const { row, token } = await fetchQuoteRow(entry, signal);
-    const key = quoteKey(entry);
-
-    if (row) {
-      quotes[key] = normalizeScreenerQuote(row);
-    }
-
-    const resolvedToken = token || (row?.instrument_token ? Number(row.instrument_token) : null);
-    if (resolvedToken) {
-      resolved[key] = {
-        instrument_token: resolvedToken,
-        segment: row?.segment || entry.segment || entry.exchange || 'NSE',
-      };
-    }
-
-    if (index < list.length - 1) {
-      await sleep(SCREENER_QUOTE_DELAY_MS, signal);
-    }
-  }
-
-  return { quotes, resolved, tokens: Object.fromEntries(
-    Object.entries(resolved)
-      .filter(([, value]) => value.instrument_token)
-      .map(([key, value]) => [key, value.instrument_token]),
-  ) };
-}
-
-function normalizeScreenerQuote(row) {
-  const close = numOrNull(row?.close);
-  const lastPrice = numOrNull(row?.last_price) ?? close;
-  const changePercent = numOrNull(row?.change_percent);
-  const netChange = numOrNull(row?.change) ?? (
-    lastPrice != null && close != null ? lastPrice - close : null
-  );
-
-  return {
-    lastPrice,
-    changePercent,
-    netChange,
-    volume: Number(row?.volume),
-    averagePrice: Number(row?.average_price),
-    buyQuantity: Number(row?.buy_quantity),
-    sellQuantity: Number(row?.sell_quantity),
-    ohlc: {
-      open: row?.open,
-      high: row?.high,
-      low: row?.low,
-      close: row?.close,
-    },
-    week52High: Number(row?.week_52_high),
-    week52Low: Number(row?.week_52_low),
-    marketCap: Number(row?.market_cap),
-    timestamp: row?.last_trade_time || row?.timestamp || null,
-  };
 }
 
 export function getEnctoken() {

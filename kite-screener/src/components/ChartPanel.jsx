@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { buildKiteChartUrl, fetchHistorical, fetchInstrumentRow } from '../screener/kiteApi';
 import { computeAthDrawdown } from '../screener/chartData';
-import { isLikelyBogusToken, normalizeBookmark, resolveInstrumentToken } from '../screener/bookmarks';
+import { normalizeBookmark, resolveInstrumentToken } from '../screener/bookmarks';
 import { getSymbol } from './ScreenerTable';
 import TradingViewChart from './TradingViewChart';
 import OrderTicket from './OrderTicket';
@@ -130,10 +130,9 @@ function writeAlertOpen(open) {
   }
 }
 
-export default function ChartPanel({ row }) {
+export default function ChartPanel({ row, onInstrumentTokenResolved }) {
   const symbol = getSymbol(row);
   const exchange = row?.exchange || row?.segment || 'NSE';
-  const directToken = row?.instrument_token || row?.token || null;
   // Keep a live reference so fetch effects can read row data without re-running
   // on every websocket tick (which replaces `row` with a new object).
   const rowRef = useRef(row);
@@ -221,11 +220,6 @@ export default function ChartPanel({ row }) {
   }, [symbol, exchange]);
 
   useEffect(() => {
-    if (directToken && !isLikelyBogusToken(directToken, rowRef.current)) {
-      setChartToken(Number(directToken));
-      return undefined;
-    }
-
     if (!symbol) {
       setChartToken(null);
       return undefined;
@@ -236,14 +230,18 @@ export default function ChartPanel({ row }) {
 
     resolveInstrumentToken(normalizeBookmark(rowRef.current), controller.signal)
       .then((token) => {
-        if (!controller.signal.aborted) setChartToken(token || null);
+        if (controller.signal.aborted) return;
+        setChartToken(token || null);
+        if (token && Number(rowRef.current?.instrument_token) !== Number(token)) {
+          onInstrumentTokenResolved?.(rowRef.current, token);
+        }
       })
       .catch(() => {
         if (!controller.signal.aborted) setChartToken(null);
       });
 
     return () => controller.abort();
-  }, [symbol, exchange, directToken]);
+  }, [symbol, exchange, onInstrumentTokenResolved]);
 
   useEffect(() => {
     if (!chartToken) {

@@ -1597,6 +1597,7 @@ tr.row-drop-target td {
 
 .bookmark-search {
   position: relative;
+  z-index: 40;
   padding: 12px 14px 0;
 }
 
@@ -1648,17 +1649,22 @@ tr.row-drop-target td {
 }
 
 .bookmark-search-dropdown {
-  position: absolute;
-  top: calc(100% - 4px);
-  right: 14px;
-  left: 14px;
-  z-index: 20;
   max-height: 320px;
   overflow: auto;
   border: 1px solid #d9deea;
   border-radius: 10px;
   background: #fff;
   box-shadow: 0 12px 28px rgba(15, 23, 42, 0.12);
+}
+
+.bookmark-search-dropdown-portal {
+  position: fixed;
+  z-index: 10000;
+}
+
+.table-panel.search-dropdown-open .table-scroll {
+  pointer-events: none;
+  user-select: none;
 }
 
 .bookmark-search-empty {
@@ -1690,7 +1696,16 @@ tr.row-drop-target td {
 }
 
 .bookmark-search-item.saved .bookmark-search-action {
-  color: #8a92a3;
+  color: var(--accent);
+}
+
+.bookmark-search-item.saved {
+  cursor: pointer;
+}
+
+.bookmark-search-item.saved:hover,
+.bookmark-search-item.saved.active {
+  background: #f5f8ff;
 }
 
 .bookmark-search-symbol {
@@ -2286,6 +2301,8 @@ tr.row-drop-target td {
   justify-content: space-between;
   gap: 8px;
   padding: 12px 14px 0;
+  position: relative;
+  z-index: 30;
 }
 
 .table-toolbar .bookmark-search {
