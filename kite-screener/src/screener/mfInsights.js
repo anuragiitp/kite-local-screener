@@ -40,13 +40,15 @@ export async function loadMfInsights(isin, { signal, force = false } = {}) {
   return promise;
 }
 
-/** Third-party fund pages to open in a new tab (URLs are name-slug/search based). */
-export function buildExternalMfLinks(name) {
-  const q = encodeURIComponent(String(name || '').trim());
+// Direct, reliable fund deep-links. Tickertape / Value Research / Groww /
+// Morningstar all key their fund pages off internal IDs (not the AMFI code or
+// ISIN we hold) and expose no stable query-string search route, so they can't
+// be linked deterministically. Zerodha Coin, however, addresses funds directly
+// by ISIN — which every scheme carries — so it lands on the exact fund page.
+export function buildExternalMfLinks({ isin } = {}) {
+  const code = String(isin || '').trim();
+  if (!code) return [];
   return [
-    { label: 'Tickertape', url: `https://www.tickertape.in/mutualfunds?search=${q}` },
-    { label: 'Value Research', url: `https://www.valueresearchonline.com/funds/search/?q=${q}` },
-    { label: 'Groww', url: `https://groww.in/search?q=${q}&entity=mutual_fund` },
-    { label: 'Morningstar', url: `https://www.morningstar.in/tools/mutual-fund-search.aspx?q=${q}` },
+    { label: 'Zerodha Coin', url: `https://coin.zerodha.com/mf/fund/${encodeURIComponent(code)}` },
   ];
 }

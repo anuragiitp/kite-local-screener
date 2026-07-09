@@ -390,7 +390,7 @@ export default function MfInsightsModal({ scheme, onClose }) {
     return () => controller.abort();
   }, [isin]);
 
-  const links = buildExternalMfLinks(name);
+  const links = buildExternalMfLinks({ isin });
 
   return (
     <div className="fundamentals-modal-overlay" role="dialog" aria-modal="true" aria-label={`${name} insights`}>
