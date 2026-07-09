@@ -3,6 +3,21 @@ export function buildLocalScreenerRules(enabled = true) {
 
   return [
     {
+      id: 998,
+      priority: 1,
+      action: {
+        type: 'modifyHeaders',
+        responseHeaders: [
+          { header: 'access-control-allow-origin', operation: 'set', value: 'https://kite.zerodha.com' },
+        ],
+      },
+      condition: {
+        urlFilter: '||api.kite.trade/instruments',
+        resourceTypes: ['xmlhttprequest'],
+        initiatorDomains: ['kite.zerodha.com'],
+      },
+    },
+    {
       id: 999,
       priority: 1,
       action: {

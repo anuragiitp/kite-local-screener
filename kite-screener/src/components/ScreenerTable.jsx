@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { DEFAULT_COLUMNS } from '../screener/presets';
-import BookmarkSearch from './BookmarkSearch';
-import MarketCapTag from './MarketCapTag';
+import { bookmarkKey } from '../screener/bookmarks';
+import BookmarkSearch from './BookmarkSearch';import MarketCapTag from './MarketCapTag';
 import ScreenerFilters from './ScreenerFilters';
 import SymbolContextMenu from './SymbolContextMenu';
 
@@ -41,8 +41,8 @@ export default function ScreenerTable({
   const columns = screener.columns || DEFAULT_COLUMNS;
   const canReorderRows = Boolean((screener.isBookmarks || screener.isWatchlist) && onReorderRows);
   const scrollRef = useRef(null);
-  const sentinelRef = useRef(null);
-  const [sort, setSort] = useState({ key: null, direction: 'desc' });
+  const rowRefs = useRef(new Map());
+  const sentinelRef = useRef(null);  const [sort, setSort] = useState({ key: null, direction: 'desc' });
   const [contextMenu, setContextMenu] = useState(null);
   const [dragFromIndex, setDragFromIndex] = useState(null);
   const [dragOverIndex, setDragOverIndex] = useState(null);
@@ -125,8 +125,26 @@ export default function ScreenerTable({
 
   const refreshBusy = liveQuotes ? quotesLoading : loading;
 
-  return (
-    <main className="table-panel">
+  const goToSavedItem = useCallback((item) => {
+    const key = bookmarkKey(item);
+    const row = rows.find((entry) => !isSeparatorRow(entry) && bookmarkKey(entry) === key);
+    if (!row) return;
+
+    onSelectRow?.(row);
+
+    requestAnimationFrame(() => {
+      const node = rowRefs.current.get(key);
+      const container = scrollRef.current;
+      if (!node || !container) return;
+
+      const top = node.getBoundingClientRect().top
+        - container.getBoundingClientRect().top
+        + container.scrollTop;
+      container.scrollTo({ top: Math.max(0, top - 48), behavior: 'smooth' });
+    });
+  }, [rows, onSelectRow]);
+
+  return (    <main className="table-panel">
       <SymbolContextMenu
         menu={contextMenu}
         onClose={() => setContextMenu(null)}
@@ -178,7 +196,11 @@ export default function ScreenerTable({
       {liveQuotes && (
         <div className="table-toolbar">
           {!isHiddenView && (
-            <BookmarkSearch onAdd={onAddBookmark} isBookmarked={isInActiveList} />
+            <BookmarkSearch
+              onAdd={onAddBookmark}
+              onGoTo={goToSavedItem}
+              isBookmarked={isInActiveList}
+            />
           )}
           {onRefresh && (
             <button
@@ -262,8 +284,12 @@ export default function ScreenerTable({
               return (
                 <tr
                   key={`${symbol}-${index}`}
-                  className={[
-                    selected ? 'selected-row' : '',
+                  ref={(node) => {
+                    const rowKey = bookmarkKey(row);
+                    if (node) rowRefs.current.set(rowKey, node);
+                    else rowRefs.current.delete(rowKey);
+                  }}
+                  className={[                    selected ? 'selected-row' : '',
                     dragOverIndex === index ? 'row-drop-target' : '',
                     dragFromIndex === index ? 'row-dragging' : '',
                   ].filter(Boolean).join(' ')}

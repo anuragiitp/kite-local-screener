@@ -5,7 +5,11 @@ import { isAutoHiddenSeries } from './hiddenSymbols';
 
 const SEARCH_SEGMENTS = ['NSE', 'BSE', 'INDICES'];
 const MAX_RESULTS = 25;
-const CACHE_PREFIX = 'kite-instruments-cache-v2-';
+// Shared base so we can prune stale entries (older dates + older versions).
+const CACHE_BASE_PREFIX = 'kite-instruments-cache-';
+// v3: v2 cached fabricated instrument_tokens (see parseRow). Bump to force a
+// rebuild so NSE/BSE tokens are null and resolve by symbol via the screener.
+const CACHE_PREFIX = `${CACHE_BASE_PREFIX}v3-`;
 const SEGMENT_IDS = {
   NSE: 1,
   BSE: 3,
@@ -28,11 +32,30 @@ function cacheKey() {
   return `${CACHE_PREFIX}${todayKey()}`;
 }
 
+/** Drop any instruments cache that isn't today's current-version entry (stale dates + old versions). */
+function pruneStaleCaches() {
+  try {
+    const keep = cacheKey();
+    const stale = [];
+    for (let i = 0; i < sessionStorage.length; i += 1) {
+      const key = sessionStorage.key(i);
+      if (key && key.startsWith(CACHE_BASE_PREFIX) && key !== keep) stale.push(key);
+    }
+    stale.forEach((key) => sessionStorage.removeItem(key));
+  } catch {
+    // ignore storage access issues
+  }
+}
+
 function parseRow(segment, row) {
   if (!Array.isArray(row) || row.length < 2) return null;
   const internalId = Number(row[0]);
-  const instrumentToken = encodeInstrumentToken(segment, internalId);
 
+  // NOTE: row[0] is an internal search id, NOT the exchange_token. Encoding it as
+  // ((id << 8) | segment) produced fake instrument_tokens that collided with real
+  // ones (e.g. NBCC's id 157 -> 40193, which is APOLLOHOSP). So we only keep a
+  // derived token for INDICES (no screener fallback exists for them) and leave
+  // NSE/BSE tokens null so they resolve by symbol via the screener endpoint.
   if (segment === 'INDICES') {
     return {
       tradingsymbol: row[1],
@@ -40,7 +63,7 @@ function parseRow(segment, row) {
       exchange: 'INDICES',
       segment: 'INDICES',
       internalId,
-      instrument_token: instrumentToken,
+      instrument_token: encodeInstrumentToken(segment, internalId),
       segmentLabel: 'INDICES',
     };
   }
@@ -51,7 +74,7 @@ function parseRow(segment, row) {
     exchange: segment,
     segment,
     internalId,
-    instrument_token: instrumentToken,
+    instrument_token: null,
     segmentLabel: segment,
   };
 }
@@ -84,33 +107,6 @@ function buildIndex(rowsBySegment) {
   return list;
 }
 
-/** Sync lookup from the in-memory instruments index (call loadInstrumentIndex first). */
-export function lookupInstrumentEntry(entry) {
-  if (!memoryLookup) return null;
-
-  const symbol = (entry?.tradingsymbol || entry?.symbol || '').trim().toUpperCase();
-  if (!symbol) return null;
-
-  const segments = [...new Set([
-    entry?.segment,
-    entry?.exchange,
-    'NSE',
-    'BSE',
-    'INDICES',
-  ].filter(Boolean))];
-
-  for (const segment of segments) {
-    const hit = memoryLookup.get(lookupKey(segment, symbol));
-    if (hit) return hit;
-  }
-
-  return null;
-}
-
-export function lookupInstrumentTokenFromIndex(entry) {
-  return lookupInstrumentEntry(entry)?.instrument_token ?? null;
-}
-
 async function fetchInstrumentsPayload(signal) {
   const date = todayKey();
   const response = await fetch(`/static/json/instruments.json?date=${date}`, {
@@ -131,6 +127,8 @@ export async function loadInstrumentIndex(signal) {
   if (loadPromise) return loadPromise;
 
   loadPromise = (async () => {
+    pruneStaleCaches();
+
     try {
       const cached = sessionStorage.getItem(cacheKey());
       if (cached) {
@@ -180,7 +178,24 @@ export function searchInstruments(index, query, limit = MAX_RESULTS) {
   if (!q || !index?.length) return [];
 
   const terms = q.split(/\s+/).filter(Boolean);
+  const qUpper = q.toUpperCase();
+  const seen = new Set();
   const hits = [];
+
+  const pushHit = (item, score) => {
+    const id = `${item.segment || item.exchange}:${item.tradingsymbol}:${item.internalId ?? ''}`;
+    if (seen.has(id)) return;
+    seen.add(id);
+    hits.push({ item, score });
+  };
+
+  // Always include exact symbol matches (NSE + BSE) even when the fuzzy scan cap is hit.
+  for (const item of index) {
+    if (isAutoHiddenSeries(item)) continue;
+    if (item.tradingsymbol.toUpperCase() === qUpper) {
+      pushHit(item, 0);
+    }
+  }
 
   for (const item of index) {
     if (isAutoHiddenSeries(item)) continue;
@@ -191,7 +206,7 @@ export function searchInstruments(index, query, limit = MAX_RESULTS) {
     const matches = terms.every((term) => haystack.includes(term.toUpperCase()));
     if (!matches) continue;
 
-    hits.push({ item, score: scoreMatch(item, q) });
+    pushHit(item, scoreMatch(item, q));
     if (hits.length >= limit * 4) break;
   }
 

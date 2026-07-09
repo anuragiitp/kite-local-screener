@@ -3,6 +3,7 @@
 
 const WS_ROOT = 'wss://ws.zerodha.com/';
 const MAX_RECONNECT_DELAY_MS = 30000;
+const SUBSCRIBE_CHUNK_SIZE = 200;
 const MAX_RECONNECT_ATTEMPTS = 20;
 
 export const MODE_LTP = 'ltp';
@@ -202,8 +203,11 @@ export class KiteTicker {
       this.modeMap.set(token, mode);
     });
     if (!fresh.length) return;
-    this._send({ a: 'subscribe', v: fresh });
-    this._send({ a: 'mode', v: [mode, fresh] });
+    for (let index = 0; index < fresh.length; index += SUBSCRIBE_CHUNK_SIZE) {
+      const chunk = fresh.slice(index, index + SUBSCRIBE_CHUNK_SIZE);
+      this._send({ a: 'subscribe', v: chunk });
+      this._send({ a: 'mode', v: [mode, chunk] });
+    }
   }
 
   unsubscribe(tokens) {
@@ -228,20 +232,25 @@ export class KiteTicker {
       this.subscribed.add(token);
       this.modeMap.set(token, fullSet.has(token) ? MODE_FULL : MODE_QUOTE);
     });
-    if (toAdd.length) this._send({ a: 'subscribe', v: toAdd });
+    for (let index = 0; index < toAdd.length; index += SUBSCRIBE_CHUNK_SIZE) {
+      const chunk = toAdd.slice(index, index + SUBSCRIBE_CHUNK_SIZE);
+      this._send({ a: 'subscribe', v: chunk });
+    }
 
     if (toRemove.length) this.unsubscribe(toRemove);
 
     const quoteOnly = [...next].filter((token) => !fullSet.has(token));
     const fullOnly = [...next].filter((token) => fullSet.has(token));
 
-    if (quoteOnly.length) {
-      quoteOnly.forEach((token) => this.modeMap.set(token, MODE_QUOTE));
-      this._send({ a: 'mode', v: [MODE_QUOTE, quoteOnly] });
+    for (let index = 0; index < quoteOnly.length; index += SUBSCRIBE_CHUNK_SIZE) {
+      const chunk = quoteOnly.slice(index, index + SUBSCRIBE_CHUNK_SIZE);
+      chunk.forEach((token) => this.modeMap.set(token, MODE_QUOTE));
+      this._send({ a: 'mode', v: [MODE_QUOTE, chunk] });
     }
-    if (fullOnly.length) {
-      fullOnly.forEach((token) => this.modeMap.set(token, MODE_FULL));
-      this._send({ a: 'mode', v: [MODE_FULL, fullOnly] });
+    for (let index = 0; index < fullOnly.length; index += SUBSCRIBE_CHUNK_SIZE) {
+      const chunk = fullOnly.slice(index, index + SUBSCRIBE_CHUNK_SIZE);
+      chunk.forEach((token) => this.modeMap.set(token, MODE_FULL));
+      this._send({ a: 'mode', v: [MODE_FULL, chunk] });
     }
   }
 

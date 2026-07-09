@@ -1,35 +1,15 @@
-import { fetchScreener } from './kiteApi';
-import { loadInstrumentIndex, lookupInstrumentTokenFromIndex } from './instruments';
-import { lookupInstrumentToken } from './instrumentTokens';
+import { lookupInstrumentToken } from './screenerTokenCache';
+import { parseInstrumentToken } from './instrumentToken';
 
 const STORAGE_KEY = 'kite-screener-bookmarks';
 const INDICES_SEGMENT_ID = 9;
-const SEGMENT_IDS = {
-  NSE: 1,
-  BSE: 3,
-  INDICES: INDICES_SEGMENT_ID,
-};
 
-/** instruments.json row[0] is an internal id (often single-digit for ETFs), not instrument_token. */
-export function isLikelyBogusToken(token, entry) {
-  const n = Number(token);
-  if (!Number.isFinite(n) || n <= 0) return false;
-  const segment = (entry?.segment || entry?.exchange || '').toUpperCase();
-  if (SEGMENT_IDS[segment] && (n & 0xff) === SEGMENT_IDS[segment]) return false;
-  if (segment === 'INDICES') return false;
-  return n < 100000;
-}
-
-export function hasValidInstrumentToken(entry) {
-  const token = Number(entry?.instrument_token || entry?.token);
-  if (!Number.isFinite(token) || token <= 0) return false;
-  return !isLikelyBogusToken(token, entry);
-}
+export { hasValidInstrumentToken } from './instrumentToken';
 
 export function bookmarkKey(entry) {
   if (entry?.type === 'separator') return `separator:${entry.label || ''}`;
-  const exchange = entry?.exchange || entry?.segment || 'NSE';
-  const symbol = (entry?.tradingsymbol || entry?.symbol || '').trim();
+  const exchange = (entry?.exchange || entry?.segment || 'NSE').trim().toUpperCase();
+  const symbol = (entry?.tradingsymbol || entry?.symbol || '').trim().toUpperCase();
   return `${exchange}:${symbol}`;
 }
 
@@ -45,8 +25,7 @@ export function normalizeBookmark(row) {
     };
   }
 
-  let instrumentToken = row?.instrument_token || row?.token || null;
-  if (isLikelyBogusToken(instrumentToken, row)) instrumentToken = null;
+  let instrumentToken = parseInstrumentToken(row?.instrument_token ?? row?.token);
 
   return {
     tradingsymbol: (row?.tradingsymbol || row?.symbol || '').trim(),
@@ -63,57 +42,53 @@ export function encodeIndexToken(internalId) {
   return ((internalId << 8) | INDICES_SEGMENT_ID) >>> 0;
 }
 
-export async function resolveInstrumentToken(entry, signal) {
-  if (entry?.instrument_token && !isLikelyBogusToken(entry.instrument_token, entry)) {
-    return Number(entry.instrument_token);
-  }
+/**
+ * One-time cleanup: earlier builds fabricated instrument_token from the search
+ * index's internal id, which collided with real Kite tokens (e.g. NBCC -> the
+ * token that actually belongs to APOLLOHOSP).
+ *
+ * For symbols we have a trusted token for (ETFs, indices — which are NOT in the
+ * screener and can't re-resolve quickly by symbol), overwrite with the correct
+ * token. For everything else, drop the token so it re-resolves via the screener
+ * token cache on next load.
+ */
+export function stripFabricatedTokens(entries, trustedTokens) {
+  if (!Array.isArray(entries) || !entries.length) return { entries, changed: false };
 
+  let changed = false;
+  const next = entries.map((entry) => {
+    if (!entry || entry.type === 'separator') return entry;
+    const segment = (entry.segment || entry.exchange || '').toUpperCase();
+    if (segment === 'INDICES') return entry;
+
+    const trusted = trustedTokens?.get?.(bookmarkKey(entry));
+    if (trusted) {
+      if (Number(entry.instrument_token) === Number(trusted)) return entry;
+      changed = true;
+      return { ...entry, instrument_token: Number(trusted) };
+    }
+
+    if (entry.instrument_token == null) return entry;
+    changed = true;
+    return { ...entry, instrument_token: null };
+  });
+
+  return { entries: changed ? next : entries, changed };
+}
+
+export async function resolveInstrumentToken(entry, signal) {
   if (entry?.segment === 'INDICES') {
+    const stored = parseInstrumentToken(entry?.instrument_token);
+    if (stored) return stored;
     const encoded = encodeIndexToken(Number(entry.internalId));
     if (encoded) return encoded;
   }
 
   try {
-    await loadInstrumentIndex(signal);
-    const indexToken = lookupInstrumentTokenFromIndex(entry);
-    if (indexToken) return indexToken;
+    return await lookupInstrumentToken(entry, signal);
   } catch {
-    // ignore lookup failures
+    return null;
   }
-
-  try {
-    const token = await lookupInstrumentToken(entry, signal);
-    if (token) return token;
-  } catch {
-    // ignore lookup failures
-  }
-
-  const symbol = (entry?.tradingsymbol || '').trim();
-  const segments = [...new Set([
-    entry?.segment,
-    entry?.exchange,
-    'NSE',
-    'BSE',
-  ].filter((segment) => segment && segment !== 'INDICES'))];
-
-  for (const segment of segments) {
-    if (!symbol) break;
-    try {
-      const page = await fetchScreener({
-        query: `tradingsymbol = "${symbol}"&segment = "${segment}"`,
-        limit: 1,
-        offset: 0,
-      }, signal);
-      const row = page.rows?.[0];
-      if (row?.instrument_token && row.tradingsymbol?.toUpperCase() === symbol.toUpperCase()) {
-        return Number(row.instrument_token);
-      }
-    } catch {
-      // try next segment
-    }
-  }
-
-  return null;
 }
 
 /** Merge screener-resolved tokens/segments back into saved entries. */
@@ -140,35 +115,6 @@ export function applyResolvedEntries(entries, resolvedByKey) {
   });
 
   return changed ? next : entries;
-}
-
-/** @deprecated use applyResolvedEntries */
-export function applyResolvedTokens(entries, tokensByKey) {
-  const resolvedByKey = {};
-  Object.entries(tokensByKey || {}).forEach(([key, token]) => {
-    resolvedByKey[key] = { instrument_token: token };
-  });
-  return applyResolvedEntries(entries, resolvedByKey);
-}
-
-function lookupQuote(entry, quotes) {
-  if (!quotes) return null;
-
-  const direct = quotes[bookmarkKey(entry)];
-  if (direct) return direct;
-
-  const symbol = (entry.tradingsymbol || '').trim().toUpperCase();
-  if (!symbol) return null;
-
-  for (const segment of [entry.segment, entry.exchange, 'NSE', 'BSE']) {
-    if (!segment || segment === 'INDICES') continue;
-    const key = `${segment}:${entry.tradingsymbol}`;
-    if (quotes[key]) return quotes[key];
-    const upperKey = `${segment}:${symbol}`;
-    if (quotes[upperKey]) return quotes[upperKey];
-  }
-
-  return null;
 }
 
 export function loadBookmarks() {
@@ -228,7 +174,7 @@ export function reorderBookmarks(bookmarks, fromIndex, toIndex) {
   return next;
 }
 
-export function bookmarksToRows(bookmarks, quotes) {
+export function bookmarksToRows(bookmarks) {
   return bookmarks.map((entry) => {
     if (entry?.type === 'separator') {
       return {
@@ -237,24 +183,12 @@ export function bookmarksToRows(bookmarks, quotes) {
       };
     }
 
-    const quote = lookupQuote(entry, quotes);
     return {
       tradingsymbol: entry.tradingsymbol,
       name: entry.name || '',
       exchange: entry.exchange || entry.segment || 'NSE',
       segment: entry.segment || entry.exchange || 'NSE',
       instrument_token: entry.instrument_token,
-      last_price: quote?.lastPrice,
-      change_percent: quote?.changePercent,
-      change: quote?.netChange,
-      volume: quote?.volume,
-      average_price: quote?.averagePrice,
-      buy_quantity: quote?.buyQuantity,
-      sell_quantity: quote?.sellQuantity,
-      open: quote?.ohlc?.open,
-      high: quote?.ohlc?.high,
-      low: quote?.ohlc?.low,
-      close: quote?.ohlc?.close,
     };
   });
 }
