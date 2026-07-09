@@ -6,9 +6,9 @@ import {
   computeMfReturns,
   mapWithConcurrency,
 } from '../screener/mfApi';
+import { fetchMfHoldings, hasSession } from '../screener/kiteApi';
 import MfNavChart from './MfNavChart';
 import MfCompareModal from './MfCompareModal';
-import TechnicalSignalCard from './TechnicalSignalCard';
 
 // One-click screens. Each is category-specific so the filtered set stays small
 // enough for trailing returns to auto-load.
@@ -52,6 +52,17 @@ function formatNav(value) {
   return value == null || !Number.isFinite(Number(value)) ? '—' : Number(value).toFixed(2);
 }
 
+const moneyFormatter = new Intl.NumberFormat('en-IN', { maximumFractionDigits: 0 });
+const unitFormatter = new Intl.NumberFormat('en-IN', { maximumFractionDigits: 3 });
+
+function formatMoney(value) {
+  return Number.isFinite(value) ? `₹${moneyFormatter.format(Math.round(value))}` : '—';
+}
+
+function formatUnits(value) {
+  return Number.isFinite(value) ? unitFormatter.format(value) : '—';
+}
+
 function formatPct(value) {
   if (value == null || !Number.isFinite(value)) return '—';
   const sign = value > 0 ? '+' : '';
@@ -69,15 +80,22 @@ function uniqueSorted(values) {
 
 export default function MutualFundsView({
   mode = 'screener',
+  embedded = false,
   savedFunds = [],
   isFundSaved,
   onToggleSave,
+  onHoldingsCount,
 }) {
   const isSavedMode = mode === 'saved';
+  const isHoldingsMode = mode === 'holdings';
 
   const [schemes, setSchemes] = useState([]);
   const [listLoading, setListLoading] = useState(true);
   const [listError, setListError] = useState('');
+
+  const [holdings, setHoldings] = useState([]);
+  const [holdingsLoading, setHoldingsLoading] = useState(false);
+  const [holdingsError, setHoldingsError] = useState('');
 
   const [filters, setFilters] = useState(DEFAULT_FILTERS);
   const [sort, setSort] = useState({ key: 'name', dir: 'asc' });
@@ -121,6 +139,98 @@ export default function MutualFundsView({
     return map;
   }, [schemes]);
 
+  const schemesByIsin = useMemo(() => {
+    const map = new Map();
+    schemes.forEach((scheme) => {
+      if (scheme.isin) map.set(scheme.isin, scheme);
+    });
+    return map;
+  }, [schemes]);
+
+  // Fetch the user's actual mutual-fund holdings from Zerodha (holdings mode only).
+  useEffect(() => {
+    if (!isHoldingsMode) return undefined;
+    if (!hasSession()) {
+      setHoldingsError('Log in to Kite, then open https://kite.zerodha.com/local-screener to see your holdings.');
+      return undefined;
+    }
+    const controller = new AbortController();
+    setHoldingsLoading(true);
+    setHoldingsError('');
+    fetchMfHoldings(controller.signal)
+      .then((data) => {
+        if (!controller.signal.aborted) setHoldings(Array.isArray(data) ? data : []);
+      })
+      .catch((error) => {
+        if (!controller.signal.aborted && error?.name !== 'AbortError') {
+          setHoldingsError(error?.message || 'Unable to load your mutual-fund holdings.');
+        }
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setHoldingsLoading(false);
+      });
+    return () => controller.abort();
+  }, [isHoldingsMode, embedded]);
+
+  // Enrich each holding with its AMFI scheme (via ISIN) and derived P&L/value.
+  const holdingRows = useMemo(() => {
+    return holdings
+      .map((holding) => {
+        const isin = String(holding.tradingsymbol || '').trim();
+        const matched = schemesByIsin.get(isin) || null;
+        const units = Number(holding.quantity) || 0;
+        const avg = Number(holding.average_price) || 0;
+        const ltp = Number(holding.last_price) || 0;
+        const invested = units * avg;
+        const current = units * ltp;
+        const rawPnl = Number(holding.pnl);
+        const pnl = Number.isFinite(rawPnl) && rawPnl !== 0 ? rawPnl : current - invested;
+        const pnlPct = invested > 0 ? (pnl / invested) * 100 : null;
+        const scheme = matched || {
+          schemeCode: null,
+          name: holding.fund || isin,
+          isin,
+          nav: ltp,
+          amc: '',
+          schemeType: '',
+          subCategory: '',
+          plan: '',
+          option: '',
+        };
+        return {
+          key: matched?.schemeCode || isin,
+          holding,
+          scheme,
+          code: matched?.schemeCode || null,
+          units,
+          avg,
+          ltp,
+          invested,
+          current,
+          pnl,
+          pnlPct,
+        };
+      })
+      .sort((a, b) => b.current - a.current);
+  }, [holdings, schemesByIsin]);
+
+  const holdingsSummary = useMemo(
+    () => holdingRows.reduce(
+      (acc, row) => {
+        acc.invested += row.invested;
+        acc.current += row.current;
+        acc.pnl += row.pnl;
+        return acc;
+      },
+      { invested: 0, current: 0, pnl: 0 },
+    ),
+    [holdingRows],
+  );
+
+  useEffect(() => {
+    if (isHoldingsMode) onHoldingsCount?.(holdingRows.length);
+  }, [isHoldingsMode, holdingRows.length, onHoldingsCount]);
+
   const typeOptions = useMemo(() => uniqueSorted(schemes.map((s) => s.schemeType)), [schemes]);
   const amcOptions = useMemo(() => uniqueSorted(schemes.map((s) => s.amc)), [schemes]);
   const subCategoryOptions = useMemo(() => {
@@ -136,6 +246,7 @@ export default function MutualFundsView({
   );
 
   const baseList = useMemo(() => {
+    if (isHoldingsMode) return [];
     if (isSavedMode) return savedFunds.map(savedScheme);
 
     const term = filters.search.trim().toLowerCase();
@@ -148,7 +259,7 @@ export default function MutualFundsView({
       if (term && !scheme.name.toLowerCase().includes(term)) return false;
       return true;
     });
-  }, [isSavedMode, savedFunds, savedScheme, schemes, filters]);
+  }, [isHoldingsMode, isSavedMode, savedFunds, savedScheme, schemes, filters]);
 
   const sortedList = useMemo(() => {
     const withReturns = baseList.map((scheme) => ({
@@ -210,6 +321,14 @@ export default function MutualFundsView({
     }
   }, [visible, listLoading, isSavedMode, loadReturnsForCodes]);
 
+  // Auto-load trailing returns for holdings that mapped to an AMFI scheme code.
+  useEffect(() => {
+    if (!isHoldingsMode || listLoading) return;
+    const codes = holdingRows.map((row) => row.code).filter(Boolean);
+    const missing = codes.filter((code) => !loadedCodesRef.current.has(code));
+    if (missing.length) loadReturnsForCodes(missing);
+  }, [isHoldingsMode, listLoading, holdingRows, loadReturnsForCodes]);
+
   const missingReturns = useMemo(
     () => visible.filter((item) => !(item.scheme.schemeCode in returnsByCode)).length,
     [visible, returnsByCode],
@@ -217,7 +336,7 @@ export default function MutualFundsView({
 
   // Load NAV history for the selected scheme.
   useEffect(() => {
-    if (!selected) {
+    if (!selected || !selected.schemeCode) {
       setSelectedHistory(null);
       return undefined;
     }
@@ -297,15 +416,109 @@ export default function MutualFundsView({
     [selectedHistory],
   );
 
-  const selectedNavCloses = useMemo(
-    () => (selectedHistory?.series || []).map((point) => point.nav),
-    [selectedHistory],
-  );
-
   const sortIndicator = (key) => (sort.key === key ? (sort.dir === 'asc' ? ' ▲' : ' ▼') : '');
 
   return (
     <>
+      {isHoldingsMode ? (
+        <main className="table-panel mf-panel">
+          <div className="panel-title">
+            <div>
+              <div className="eyebrow">Mutual Funds</div>
+              <h2>My Holdings</h2>
+              <p>Your Zerodha mutual-fund holdings, enriched with NAV history &amp; returns from AMFI · mfapi.in.</p>
+            </div>
+            <div className="panel-title-actions">
+              <div className="status-pill">
+                {holdingsLoading ? 'Loading' : `${holdingRows.length} fund${holdingRows.length === 1 ? '' : 's'}`}
+              </div>
+            </div>
+          </div>
+
+          {holdingRows.length > 0 && (
+            <div className="mf-holdings-summary">
+              <div className="mf-holdings-summary-item">
+                <span>Invested</span>
+                <strong>{formatMoney(holdingsSummary.invested)}</strong>
+              </div>
+              <div className="mf-holdings-summary-item">
+                <span>Current</span>
+                <strong>{formatMoney(holdingsSummary.current)}</strong>
+              </div>
+              <div className="mf-holdings-summary-item">
+                <span>P&amp;L</span>
+                <strong className={toneClass(holdingsSummary.pnl)}>
+                  {formatMoney(holdingsSummary.pnl)}
+                  {holdingsSummary.invested > 0 && ` (${formatPct((holdingsSummary.pnl / holdingsSummary.invested) * 100)})`}
+                </strong>
+              </div>
+            </div>
+          )}
+
+          {holdingsError && <div className="error-box">{holdingsError}</div>}
+
+          <div className="table-scroll">
+            <table className="screener-table mf-table mf-holdings-table">
+              <thead>
+                <tr>
+                  <th className="align-left">Scheme</th>
+                  <th className="num-cell">Units</th>
+                  <th className="num-cell">Avg NAV</th>
+                  <th className="num-cell">NAV</th>
+                  <th className="num-cell">Current</th>
+                  <th className="num-cell">P&amp;L</th>
+                </tr>
+              </thead>
+              <tbody>
+                {!holdingsLoading && holdingRows.length === 0 && (
+                  <tr>
+                    <td colSpan={6} className="empty-cell">
+                      {holdingsError
+                        ? 'Could not load your mutual-fund holdings.'
+                        : 'No mutual-fund holdings found in your Zerodha account.'}
+                    </td>
+                  </tr>
+                )}
+                {holdingsLoading && holdingRows.length === 0 && !holdingsError && (
+                  <tr>
+                    <td colSpan={6} className="empty-cell">Loading your holdings…</td>
+                  </tr>
+                )}
+                {holdingRows.map((row) => {
+                  const selectedRow = Boolean(row.code) && selected?.schemeCode === row.code;
+                  const ret = row.code ? returnsByCode[row.code] : null;
+                  return (
+                    <tr
+                      key={row.key}
+                      className={`${selectedRow ? 'selected-row' : ''}${row.code ? '' : ' mf-holdings-unlinked'}`}
+                      onClick={() => row.code && setSelected(row.scheme)}
+                    >
+                      <td className="symbol-cell align-left">
+                        <span className="symbol-text">
+                          <span className="mf-name">{row.scheme.name}</span>
+                          <span className="mf-sub">
+                            {row.scheme.subCategory && <span className="mf-tag">{row.scheme.subCategory}</span>}
+                            {row.holding.folio && <span className="mf-amc">Folio {row.holding.folio}</span>}
+                            {ret?.r1y != null && <span className="mf-amc">1Y {formatPct(ret.r1y)}</span>}
+                          </span>
+                        </span>
+                      </td>
+                      <td className="num-cell">{formatUnits(row.units)}</td>
+                      <td className="num-cell">{formatNav(row.avg)}</td>
+                      <td className="num-cell">{formatNav(row.ltp)}</td>
+                      <td className="num-cell">{formatMoney(row.current)}</td>
+                      <td className={`num-cell ${toneClass(row.pnl)}`}>
+                        <span className="mf-holdings-pnl">{formatMoney(row.pnl)}</span>
+                        <small className="mf-holdings-pnl-pct">{formatPct(row.pnlPct)}</small>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </main>
+      ) : (
       <main className="table-panel mf-panel">
         {!isSavedMode && (
           <div className="panel-title">
@@ -494,6 +707,7 @@ export default function MutualFundsView({
           )}
         </div>
       </main>
+      )}
 
       <aside className="chart-panel mf-detail-panel">
         {!selected ? (
@@ -558,12 +772,6 @@ export default function MutualFundsView({
                 </div>
               )}
             </div>
-
-            <TechnicalSignalCard
-              closes={selectedNavCloses}
-              loading={selectedLoading}
-              subject="NAV"
-            />
           </>
         )}
       </aside>

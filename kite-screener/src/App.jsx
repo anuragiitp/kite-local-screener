@@ -64,6 +64,7 @@ import {
   HIDDEN_SCREENER_ID,
   MUTUAL_FUNDS_SCREENER_ID,
   MF_SAVED_SCREENER_ID,
+  MF_HOLDINGS_SCREENER_ID,
   SCREENERS,
   makeBookmarksScreener,
   makeHiddenScreener,
@@ -160,6 +161,7 @@ export default function App() {
   const [hiddenSymbols, setHiddenSymbols] = useState(storage.hiddenSymbols);
   const [watchlists, setWatchlists] = useState(storage.watchlists);
   const [savedFunds, setSavedFunds] = useState(loadSavedFunds);
+  const [mfHoldingsCount, setMfHoldingsCount] = useState(0);
   const [activeScreenerId, setActiveScreenerId] = useState(BOOKMARKS_SCREENER_ID);
   const [dashboardTokens, setDashboardTokens] = useState([]);
   const [positionsTokens, setPositionsTokens] = useState([]);
@@ -194,7 +196,8 @@ export default function App() {
   const isPortfolioView = isPositionsView || isHoldingsView;
   const isMfScreenerView = activeScreenerId === MUTUAL_FUNDS_SCREENER_ID;
   const isMfSavedView = activeScreenerId === MF_SAVED_SCREENER_ID;
-  const isMutualFundsView = isMfScreenerView || isMfSavedView;
+  const isMfHoldingsView = activeScreenerId === MF_HOLDINGS_SCREENER_ID;
+  const isMutualFundsView = isMfScreenerView || isMfSavedView || isMfHoldingsView;
   const isBookmarksView = activeScreenerId === BOOKMARKS_SCREENER_ID;
   const isHiddenView = activeScreenerId === HIDDEN_SCREENER_ID;
   const isWatchlistView = isWatchlistScreenerId(activeScreenerId);
@@ -884,14 +887,17 @@ export default function App() {
           onRenameWatchlist={handleRenameWatchlist}
           onDeleteWatchlist={handleDeleteWatchlist}
           savedFundCount={savedFunds.length}
+          mfHoldingsCount={mfHoldingsCount}
         />
 
         {isMutualFundsView ? (
           <MutualFundsView
-            mode={isMfSavedView ? 'saved' : 'screener'}
+            mode={isMfHoldingsView ? 'holdings' : isMfSavedView ? 'saved' : 'screener'}
+            embedded={embedded}
             savedFunds={savedFunds}
             isFundSaved={isFundSaved}
             onToggleSave={toggleSaveFund}
+            onHoldingsCount={setMfHoldingsCount}
           />
         ) : isDashboardView ? (
           <DashboardView

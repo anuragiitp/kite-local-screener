@@ -7,6 +7,7 @@ import {
   POSITIONS_SCREENER_ID,
   MUTUAL_FUNDS_SCREENER_ID,
   MF_SAVED_SCREENER_ID,
+  MF_HOLDINGS_SCREENER_ID,
 } from '../screener/presets';
 import { SCREENERS } from '../screener/presets';
 import { MAX_WATCHLISTS, watchlistScreenerId } from '../screener/watchlists';
@@ -25,6 +26,7 @@ export default function ScreenerNav({
   onRenameWatchlist,
   onDeleteWatchlist,
   savedFundCount = 0,
+  mfHoldingsCount = 0,
 }) {
   const visible = SCREENERS.filter((screener) => screener.category === activeCategory);
 
@@ -139,6 +141,16 @@ export default function ScreenerNav({
                 onClick={() => setActiveScreenerId(MUTUAL_FUNDS_SCREENER_ID)}
               >
                 <span className="wl-item-name">Fund Screener</span>
+              </button>
+            </div>
+            <div className={`wl-item wl-item-fixed${activeScreenerId === MF_HOLDINGS_SCREENER_ID ? ' active' : ''}`}>
+              <button
+                type="button"
+                className="wl-item-main"
+                onClick={() => setActiveScreenerId(MF_HOLDINGS_SCREENER_ID)}
+              >
+                <span className="wl-item-name">My Holdings</span>
+                {mfHoldingsCount > 0 && <span className="wl-item-count">{mfHoldingsCount}</span>}
               </button>
             </div>
             <div className={`wl-item wl-item-fixed${activeScreenerId === MF_SAVED_SCREENER_ID ? ' active' : ''}`}>

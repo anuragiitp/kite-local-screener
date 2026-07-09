@@ -8,34 +8,8 @@ import OrderTicket from './OrderTicket';
 import AlertTicket from './AlertTicket';
 import FundamentalsModal, { buildStreakTechnicalsUrl, buildTijoriFundamentalsUrl } from './FundamentalsModal';
 import TrendPanel from './TrendPanel';
-import TechnicalSignalCard from './TechnicalSignalCard';
 
 const INTRADAY_RANGES = new Set(['1D', '5D']);
-
-// Nifty 50 index — benchmark for relative-strength scoring. Loaded once and
-// cached for the session (shared across every selected stock).
-const BENCHMARK_TOKEN = 256265;
-let benchmarkCache = null;
-let benchmarkPromise = null;
-
-function loadBenchmarkCloses() {
-  if (benchmarkCache) return Promise.resolve(benchmarkCache);
-  if (!benchmarkPromise) {
-    benchmarkPromise = fetchHistorical(BENCHMARK_TOKEN, { interval: 'day', days: 400 })
-      .then((candles) => {
-        const closes = (Array.isArray(candles) ? candles : [])
-          .map((candle) => Number(candle?.[4]))
-          .filter((value) => Number.isFinite(value));
-        benchmarkCache = closes;
-        return closes;
-      })
-      .catch(() => {
-        benchmarkPromise = null;
-        return [];
-      });
-  }
-  return benchmarkPromise;
-}
 
 const CHART_FETCH = {
   '1D': { intraday: true, interval: '5minute', sessions: 1 },
@@ -151,21 +125,10 @@ export default function ChartPanel({ row, onInstrumentTokenResolved }) {
   const [dailyLoading, setDailyLoading] = useState(false);
   const [intradayLoading, setIntradayLoading] = useState(false);
   const [error, setError] = useState('');
-  const [benchmarkCloses, setBenchmarkCloses] = useState(null);
 
   const isIntraday = INTRADAY_RANGES.has(chartRange);
   const candles = isIntraday ? intradayCandles : dailyCandles;
   const loading = isIntraday ? intradayLoading : dailyLoading;
-
-  useEffect(() => {
-    let active = true;
-    loadBenchmarkCloses().then((closes) => {
-      if (active) setBenchmarkCloses(closes);
-    });
-    return () => {
-      active = false;
-    };
-  }, []);
 
   const detailRow = useMemo(
     () => mergeInstrumentDetails(screenerRow, row),
@@ -175,19 +138,6 @@ export default function ChartPanel({ row, onInstrumentTokenResolved }) {
   const athInfo = useMemo(
     () => computeAthDrawdown(dailyCandles, detailRow?.last_price ?? row?.last_price),
     [dailyCandles, detailRow?.last_price, row?.last_price],
-  );
-
-  const dailyCloses = useMemo(
-    () => dailyCandles.map((candle) => Number(candle?.[4])).filter((value) => Number.isFinite(value)),
-    [dailyCandles],
-  );
-  const dailyHighs = useMemo(
-    () => dailyCandles.map((candle) => Number(candle?.[2])),
-    [dailyCandles],
-  );
-  const dailyLows = useMemo(
-    () => dailyCandles.map((candle) => Number(candle?.[3])),
-    [dailyCandles],
   );
 
   useEffect(() => {
@@ -397,14 +347,6 @@ export default function ChartPanel({ row, onInstrumentTokenResolved }) {
             candles={dailyCandles}
             loading={dailyLoading}
             athInfo={athInfo}
-          />
-          <TechnicalSignalCard
-            closes={dailyCloses}
-            highs={dailyHighs}
-            lows={dailyLows}
-            benchmarkCloses={benchmarkCloses}
-            loading={dailyLoading}
-            subject="price"
           />
           {symbol && chartToken && isOrderableExchange(exchange) && (
             alertOpen ? (
