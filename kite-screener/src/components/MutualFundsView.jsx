@@ -53,6 +53,32 @@ function formatNav(value) {
   return value == null || !Number.isFinite(Number(value)) ? '—' : Number(value).toFixed(2);
 }
 
+const NAV_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+// Parse an AMFI date string ("10-Jul-2026") into a timestamp, so it can be
+// compared against the mfapi history timestamp to decide which NAV is fresher.
+function parseAmfiDate(str) {
+  const match = String(str || '').match(/^(\d{1,2})-([A-Za-z]{3})-(\d{4})$/);
+  if (!match) return null;
+  const day = Number(match[1]);
+  const mon = NAV_MONTHS.indexOf(match[2][0].toUpperCase() + match[2].slice(1, 3).toLowerCase());
+  const year = Number(match[3]);
+  if (mon < 0 || !day || !year) return null;
+  return new Date(year, mon, day).getTime();
+}
+
+// Accepts either a timestamp (from mfapi history) or an AMFI date string
+// ("10-Jul-2026") and renders a consistent "10-Jul-2026" label.
+function formatNavDate(value) {
+  if (value == null || value === '') return '';
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    const d = new Date(value);
+    if (Number.isNaN(d.getTime())) return '';
+    return `${String(d.getDate()).padStart(2, '0')}-${NAV_MONTHS[d.getMonth()]}-${d.getFullYear()}`;
+  }
+  return String(value);
+}
+
 const moneyFormatter = new Intl.NumberFormat('en-IN', { maximumFractionDigits: 0 });
 const unitFormatter = new Intl.NumberFormat('en-IN', { maximumFractionDigits: 3 });
 
@@ -97,6 +123,7 @@ export default function MutualFundsView({
   const [holdings, setHoldings] = useState([]);
   const [holdingsLoading, setHoldingsLoading] = useState(false);
   const [holdingsError, setHoldingsError] = useState('');
+  const [refreshing, setRefreshing] = useState(false);
 
   const [filters, setFilters] = useState(DEFAULT_FILTERS);
   const [sort, setSort] = useState({ key: 'name', dir: 'asc' });
@@ -175,18 +202,56 @@ export default function MutualFundsView({
   }, [isHoldingsMode, embedded]);
 
   // Enrich each holding with its AMFI scheme (via ISIN) and derived P&L/value.
+  // Kite's /oms/mf/holdings last_price can lag a day or two, and the two public
+  // feeds (mfapi.in history vs AMFI NAVAll.txt) don't update in lockstep — either
+  // one can be ahead on any given day — so we pick whichever NAV is the most
+  // recent BY DATE (not by a fixed source order) and recompute value + P&L from
+  // it. Kite's last_price is only a fallback for schemes we can't map.
   const holdingRows = useMemo(() => {
     return holdings
       .map((holding) => {
         const isin = String(holding.tradingsymbol || '').trim();
         const matched = schemesByIsin.get(isin) || null;
+        const code = matched?.schemeCode || null;
         const units = Number(holding.quantity) || 0;
         const avg = Number(holding.average_price) || 0;
-        const ltp = Number(holding.last_price) || 0;
+        const kiteLtp = Number(holding.last_price) || 0;
+
+        const ret = code ? returnsByCode[code] : null;
+        const candidates = [];
+        if (ret && Number.isFinite(ret.latestNav) && ret.latestNav > 0) {
+          candidates.push({
+            nav: Number(ret.latestNav),
+            t: Number.isFinite(ret.latestDate) ? ret.latestDate : -Infinity,
+            source: 'history',
+            dateRaw: ret.latestDate,
+          });
+        }
+        if (matched && Number.isFinite(matched.nav) && matched.nav > 0) {
+          candidates.push({
+            nav: Number(matched.nav),
+            t: parseAmfiDate(matched.navDate) ?? -Infinity,
+            source: 'amfi',
+            dateRaw: matched.navDate || '',
+          });
+        }
+        // Freshest date wins; keeps whichever public feed happens to be ahead.
+        candidates.sort((a, b) => b.t - a.t);
+        const best = candidates[0] || null;
+
+        const ltp = best ? best.nav : kiteLtp;
+        const navSource = best ? best.source : 'kite';
+        const usingFreshNav = navSource !== 'kite';
+        const navDate = best ? formatNavDate(best.dateRaw) : '';
+
         const invested = units * avg;
         const current = units * ltp;
+        // When we override the NAV, Kite's pnl no longer matches, so recompute it
+        // from the fresh price. Only trust Kite's pnl if we kept Kite's price.
         const rawPnl = Number(holding.pnl);
-        const pnl = Number.isFinite(rawPnl) && rawPnl !== 0 ? rawPnl : current - invested;
+        const pnl = usingFreshNav
+          ? current - invested
+          : (Number.isFinite(rawPnl) && rawPnl !== 0 ? rawPnl : current - invested);
         const pnlPct = invested > 0 ? (pnl / invested) * 100 : null;
         const scheme = matched || {
           schemeCode: null,
@@ -200,13 +265,16 @@ export default function MutualFundsView({
           option: '',
         };
         return {
-          key: matched?.schemeCode || isin,
+          key: code || isin,
           holding,
           scheme,
-          code: matched?.schemeCode || null,
+          code,
           units,
           avg,
           ltp,
+          navDate,
+          navSource,
+          kiteLtp,
           invested,
           current,
           pnl,
@@ -214,7 +282,7 @@ export default function MutualFundsView({
         };
       })
       .sort((a, b) => b.current - a.current);
-  }, [holdings, schemesByIsin]);
+  }, [holdings, schemesByIsin, returnsByCode]);
 
   const holdingsSummary = useMemo(
     () => holdingRows.reduce(
@@ -295,8 +363,10 @@ export default function MutualFundsView({
 
   const visible = useMemo(() => sortedList.slice(0, DISPLAY_LIMIT), [sortedList]);
 
-  const loadReturnsForCodes = useCallback((codes) => {
-    const pending = codes.filter((code) => !loadedCodesRef.current.has(code));
+  const loadReturnsForCodes = useCallback((codes, { force = false } = {}) => {
+    const pending = force
+      ? Array.from(new Set(codes))
+      : codes.filter((code) => !loadedCodesRef.current.has(code));
     if (!pending.length) return;
 
     pending.forEach((code) => loadedCodesRef.current.add(code));
@@ -304,7 +374,7 @@ export default function MutualFundsView({
     setReturnsLoading(true);
 
     mapWithConcurrency(pending, RETURNS_CONCURRENCY, async (code) => {
-      const data = await loadMfReturns(code);
+      const data = await loadMfReturns(code, { force });
       if (returnsGenRef.current !== gen) return null;
       setReturnsByCode((prev) => ({ ...prev, [code]: data }));
       return data;
@@ -330,6 +400,45 @@ export default function MutualFundsView({
     const missing = codes.filter((code) => !loadedCodesRef.current.has(code));
     if (missing.length) loadReturnsForCodes(missing);
   }, [isHoldingsMode, listLoading, holdingRows, loadReturnsForCodes]);
+
+  // Manual refresh for the holdings table: re-pull the Kite holdings and force
+  // a fresh fetch of BOTH NAV feeds (AMFI master list + per-fund history) so the
+  // cached values are bypassed and the latest NAV/value/P&L are recomputed.
+  const handleRefreshHoldings = useCallback(async () => {
+    if (!isHoldingsMode || refreshing) return;
+    if (!hasSession()) {
+      setHoldingsError('Log in to Kite, then open https://kite.zerodha.com/local-screener to see your holdings.');
+      return;
+    }
+    setRefreshing(true);
+    setHoldingsError('');
+    try {
+      const [schemesData, holdingsData] = await Promise.all([
+        loadMfSchemes({ force: true }).catch(() => null),
+        fetchMfHoldings(),
+      ]);
+      if (schemesData) setSchemes(schemesData);
+      const list = Array.isArray(holdingsData) ? holdingsData : [];
+      setHoldings(list);
+
+      const byIsin = new Map();
+      (schemesData || schemes).forEach((scheme) => {
+        if (scheme.isin) byIsin.set(scheme.isin, scheme);
+      });
+      const codes = list
+        .map((holding) => byIsin.get(String(holding.tradingsymbol || '').trim())?.schemeCode)
+        .filter(Boolean);
+
+      // Drop cached returns/history so the NAV comes back from a live fetch.
+      loadedCodesRef.current = new Set();
+      setReturnsByCode({});
+      if (codes.length) loadReturnsForCodes(codes, { force: true });
+    } catch (error) {
+      setHoldingsError(error?.message || 'Unable to refresh your mutual-fund holdings.');
+    } finally {
+      setRefreshing(false);
+    }
+  }, [isHoldingsMode, refreshing, schemes, loadReturnsForCodes]);
 
   const missingReturns = useMemo(
     () => visible.filter((item) => !(item.scheme.schemeCode in returnsByCode)).length,
@@ -431,6 +540,16 @@ export default function MutualFundsView({
               <p>Your Zerodha mutual-fund holdings, enriched with NAV history &amp; returns from AMFI · mfapi.in.</p>
             </div>
             <div className="panel-title-actions">
+              <button
+                type="button"
+                className="mf-refresh-btn"
+                onClick={handleRefreshHoldings}
+                disabled={refreshing || holdingsLoading}
+                title="Re-fetch holdings and pull the latest NAV"
+              >
+                <span className={`mf-refresh-icon${refreshing ? ' spinning' : ''}`}>↻</span>
+                {refreshing ? 'Refreshing…' : 'Refresh'}
+              </button>
               <div className="status-pill">
                 {holdingsLoading ? 'Loading' : `${holdingRows.length} fund${holdingRows.length === 1 ? '' : 's'}`}
               </div>
@@ -507,7 +626,17 @@ export default function MutualFundsView({
                       </td>
                       <td className="num-cell">{formatUnits(row.units)}</td>
                       <td className="num-cell">{formatNav(row.avg)}</td>
-                      <td className="num-cell">{formatNav(row.ltp)}</td>
+                      <td className="num-cell">
+                        {formatNav(row.ltp)}
+                        {row.navDate && (
+                          <small
+                            className="mf-holdings-navdate"
+                            title={`NAV as of ${row.navDate}`}
+                          >
+                            {row.navDate}
+                          </small>
+                        )}
+                      </td>
                       <td className="num-cell">{formatMoney(row.current)}</td>
                       <td className={`num-cell ${toneClass(row.pnl)}`}>
                         <span className="mf-holdings-pnl">{formatMoney(row.pnl)}</span>

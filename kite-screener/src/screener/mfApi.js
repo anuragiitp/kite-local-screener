@@ -130,11 +130,11 @@ function toTime(ddmmyyyy) {
 }
 
 /** Fetch a scheme's full NAV history (ascending by date), cached per scheme. */
-export async function loadMfHistory(schemeCode, { signal } = {}) {
+export async function loadMfHistory(schemeCode, { signal, force = false } = {}) {
   const code = String(schemeCode);
   const cached = historyCache.get(code);
-  if (cached && Date.now() - cached.at < HISTORY_TTL_MS) return cached.data;
-  if (historyPromises.has(code)) return historyPromises.get(code);
+  if (!force && cached && Date.now() - cached.at < HISTORY_TTL_MS) return cached.data;
+  if (!force && historyPromises.has(code)) return historyPromises.get(code);
 
   const promise = (async () => {
     const payload = await mfFetchJson(`${MFAPI_BASE}/${code}`, { signal });
@@ -212,8 +212,8 @@ export function computeMfReturns(series) {
 }
 
 /** Fetch a scheme's history and derive its trailing returns in one call. */
-export async function loadMfReturns(schemeCode, { signal } = {}) {
-  const { series } = await loadMfHistory(schemeCode, { signal });
+export async function loadMfReturns(schemeCode, { signal, force = false } = {}) {
+  const { series } = await loadMfHistory(schemeCode, { signal, force });
   return computeMfReturns(series);
 }
 
