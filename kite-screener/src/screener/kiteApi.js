@@ -245,6 +245,25 @@ export async function fetchHoldings(signal) {
   return payload?.data || [];
 }
 
+// Mutual-fund holdings (Coin). Returns a flat array; each entry carries the
+// scheme ISIN in `tradingsymbol`, allotted units, average/last NAV and P&L.
+export async function fetchMfHoldings(signal) {
+  const response = await fetch('/oms/mf/holdings', {
+    method: 'GET',
+    credentials: 'include',
+    signal,
+    headers: authHeaders(),
+  });
+
+  const payload = await response.json();
+
+  if (!response.ok || payload?.status !== 'success') {
+    throw new Error(payload?.message || `MF holdings failed with HTTP ${response.status}`);
+  }
+
+  return payload?.data || [];
+}
+
 export function buildKiteChartUrl({ exchange = 'NSE', symbol, token }) {
   if (!symbol || !token) return '';
   return `https://kite.zerodha.com/markets/ext/chart/web/tvc/${exchange}/${symbol}/${token}`;

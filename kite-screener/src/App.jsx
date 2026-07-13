@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ChartPanel from './components/ChartPanel';
 import DashboardView from './components/DashboardView';
 import GlobalFilterBar from './components/GlobalFilterBar';
+import MutualFundsView from './components/MutualFundsView';
 import PositionsView from './components/PositionsView';
 import ScreenerNav from './components/ScreenerNav';
 import ScreenerTable from './components/ScreenerTable';
@@ -61,11 +62,15 @@ import {
   HOLDINGS_SCREENER_ID,
   CATEGORIES,
   HIDDEN_SCREENER_ID,
+  MUTUAL_FUNDS_SCREENER_ID,
+  MF_SAVED_SCREENER_ID,
+  MF_HOLDINGS_SCREENER_ID,
   SCREENERS,
   makeBookmarksScreener,
   makeHiddenScreener,
   makeWatchlistScreener,
 } from './screener/presets';
+import { loadSavedFunds, saveSavedFunds, isFundSaved as isFundSavedInList, toggleSavedFund } from './screener/mfBookmarks';
 import { filterHoldings, normalizeHolding, normalizePosition } from './screener/positions';
 import { buildRequestBody } from './screener/queryBuilder';
 import { mergeLiveTickRow } from './screener/liveTick';
@@ -155,6 +160,8 @@ export default function App() {
   const [bookmarks, setBookmarks] = useState(storage.bookmarks);
   const [hiddenSymbols, setHiddenSymbols] = useState(storage.hiddenSymbols);
   const [watchlists, setWatchlists] = useState(storage.watchlists);
+  const [savedFunds, setSavedFunds] = useState(loadSavedFunds);
+  const [mfHoldingsCount, setMfHoldingsCount] = useState(0);
   const [activeScreenerId, setActiveScreenerId] = useState(BOOKMARKS_SCREENER_ID);
   const [dashboardTokens, setDashboardTokens] = useState([]);
   const [positionsTokens, setPositionsTokens] = useState([]);
@@ -187,6 +194,10 @@ export default function App() {
   const isPositionsView = activeScreenerId === POSITIONS_SCREENER_ID;
   const isHoldingsView = activeScreenerId === HOLDINGS_SCREENER_ID;
   const isPortfolioView = isPositionsView || isHoldingsView;
+  const isMfScreenerView = activeScreenerId === MUTUAL_FUNDS_SCREENER_ID;
+  const isMfSavedView = activeScreenerId === MF_SAVED_SCREENER_ID;
+  const isMfHoldingsView = activeScreenerId === MF_HOLDINGS_SCREENER_ID;
+  const isMutualFundsView = isMfScreenerView || isMfSavedView || isMfHoldingsView;
   const isBookmarksView = activeScreenerId === BOOKMARKS_SCREENER_ID;
   const isHiddenView = activeScreenerId === HIDDEN_SCREENER_ID;
   const isWatchlistView = isWatchlistScreenerId(activeScreenerId);
@@ -221,6 +232,16 @@ export default function App() {
   const persistHiddenSymbols = useCallback((next) => {
     saveHiddenSymbols(next);
     setHiddenSymbols(next);
+  }, []);
+
+  const isFundSaved = useCallback((scheme) => isFundSavedInList(savedFunds, scheme), [savedFunds]);
+
+  const toggleSaveFund = useCallback((scheme) => {
+    setSavedFunds((current) => {
+      const next = toggleSavedFund(current, scheme);
+      saveSavedFunds(next);
+      return next;
+    });
   }, []);
 
   const isBookmarked = useCallback((row) => isInBookmarks(bookmarks, row), [bookmarks]);
@@ -539,7 +560,7 @@ export default function App() {
       return undefined;
     }
 
-    if (isListView || isDashboardView || isPortfolioView) {
+    if (isListView || isDashboardView || isPortfolioView || isMutualFundsView) {
       setLoading(false);
       setLoadingMore(false);
       setHasMore(false);
@@ -581,7 +602,7 @@ export default function App() {
       });
 
     return () => controller.abort();
-  }, [embedded, isListView, isDashboardView, isPortfolioView, activeScreener, requestBody, marketCapId, limit, refreshKey]);
+  }, [embedded, isListView, isDashboardView, isPortfolioView, isMutualFundsView, activeScreener, requestBody, marketCapId, limit, refreshKey]);
 
   const loadMore = useCallback(() => {
     if (isListView || !embedded || !hasSession() || loading || loadingMore || !hasMore) return;
@@ -851,7 +872,7 @@ export default function App() {
         indexTokensById={indexTokensById}
       />
 
-      <div className={`workspace${isDashboardView ? ' workspace-dashboard' : ''}${isPortfolioView ? ' workspace-portfolio' : ''}`}>
+      <div className={`workspace${isDashboardView ? ' workspace-dashboard' : ''}${isPortfolioView ? ' workspace-portfolio' : ''}${isMutualFundsView ? ' workspace-mf' : ''}`}>
         <ScreenerNav
           bookmarkCount={bookmarks.length}
           hiddenCount={hiddenSymbols.length}
@@ -865,9 +886,20 @@ export default function App() {
           onCreateWatchlist={handleCreateWatchlist}
           onRenameWatchlist={handleRenameWatchlist}
           onDeleteWatchlist={handleDeleteWatchlist}
+          savedFundCount={savedFunds.length}
+          mfHoldingsCount={mfHoldingsCount}
         />
 
-        {isDashboardView ? (
+        {isMutualFundsView ? (
+          <MutualFundsView
+            mode={isMfHoldingsView ? 'holdings' : isMfSavedView ? 'saved' : 'screener'}
+            embedded={embedded}
+            savedFunds={savedFunds}
+            isFundSaved={isFundSaved}
+            onToggleSave={toggleSaveFund}
+            onHoldingsCount={setMfHoldingsCount}
+          />
+        ) : isDashboardView ? (
           <DashboardView
             embedded={embedded}
             marketCapId={marketCapId}

@@ -58,12 +58,30 @@ if (!location.pathname.startsWith('/local-screener')) {
 
     }
 
-
+    if (data.type === 'mfFetch') {
+      chrome.runtime.sendMessage({
+        type: 'mfFetch',
+        url: data.url,
+        accept: data.accept,
+      }, (response) => {
+        window.postMessage(
+          {
+            source: 'kite-screener-bridge',
+            type: 'mfFetch',
+            id: data.id,
+            ok: Boolean(response?.ok),
+            status: response?.status ?? 0,
+            text: response?.text || '',
+            error: response?.error || (chrome.runtime.lastError?.message ?? ''),
+          },
+          '*',
+        );
+      });
+      return;
+    }
 
     if (data.type === 'getInstrumentDump') {
-
       chrome.runtime.sendMessage({ type: 'getInstrumentDump' }, (response) => {
-
         window.postMessage(
 
           {

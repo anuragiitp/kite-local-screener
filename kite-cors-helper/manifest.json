@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Kite Local Screener",
-  "version": "1.2.1",
+  "version": "1.6.0",
   "description": "Loads the local screener app only at https://kite.zerodha.com/local-screener using your Kite session.",
   "permissions": [
     "declarativeNetRequest",
@@ -14,7 +14,10 @@
   ],
   "host_permissions": [
     "https://kite.zerodha.com/*",
-    "https://api.kite.trade/*"
+    "https://api.kite.trade/*",
+    "https://*.amfiindia.com/*",
+    "https://api.mfapi.in/*",
+    "https://finapi.upvaly.com/*"
   ],
   "background": {
     "service_worker": "background.js",

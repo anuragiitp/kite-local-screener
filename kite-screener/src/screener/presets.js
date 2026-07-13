@@ -29,6 +29,9 @@ export const HIDDEN_SCREENER_ID = 'hidden';
 export const DASHBOARD_SCREENER_ID = 'dashboard';
 export const POSITIONS_SCREENER_ID = 'positions';
 export const HOLDINGS_SCREENER_ID = 'holdings';
+export const MUTUAL_FUNDS_SCREENER_ID = 'mutual-funds';
+export const MF_SAVED_SCREENER_ID = 'mutual-funds-saved';
+export const MF_HOLDINGS_SCREENER_ID = 'mutual-funds-holdings';
 
 export const DASHBOARD_GAINERS = {
   id: 'dash-gainers',
