@@ -10,6 +10,7 @@ import { fetchMfHoldings, hasSession } from '../screener/kiteApi';
 import MfNavChart from './MfNavChart';
 import MfCompareModal from './MfCompareModal';
 import MfInsightsModal from './MfInsightsModal';
+import MfAllocationPie from './MfAllocationPie';
 
 // One-click screens. Each is category-specific so the filtered set stays small
 // enough for trailing returns to auto-load.
@@ -557,22 +558,26 @@ export default function MutualFundsView({
           </div>
 
           {holdingRows.length > 0 && (
-            <div className="mf-holdings-summary">
-              <div className="mf-holdings-summary-item">
-                <span>Invested</span>
-                <strong>{formatMoney(holdingsSummary.invested)}</strong>
+            <div className="mf-holdings-overview">
+              <div className="mf-holdings-summary">
+                <div className="mf-holdings-summary-item">
+                  <span>Invested</span>
+                  <strong>{formatMoney(holdingsSummary.invested)}</strong>
+                </div>
+                <div className="mf-holdings-summary-item">
+                  <span>Current</span>
+                  <strong>{formatMoney(holdingsSummary.current)}</strong>
+                </div>
+                <div className="mf-holdings-summary-item">
+                  <span>P&amp;L</span>
+                  <strong className={toneClass(holdingsSummary.pnl)}>
+                    {formatMoney(holdingsSummary.pnl)}
+                    {holdingsSummary.invested > 0 && ` (${formatPct((holdingsSummary.pnl / holdingsSummary.invested) * 100)})`}
+                  </strong>
+                </div>
               </div>
-              <div className="mf-holdings-summary-item">
-                <span>Current</span>
-                <strong>{formatMoney(holdingsSummary.current)}</strong>
-              </div>
-              <div className="mf-holdings-summary-item">
-                <span>P&amp;L</span>
-                <strong className={toneClass(holdingsSummary.pnl)}>
-                  {formatMoney(holdingsSummary.pnl)}
-                  {holdingsSummary.invested > 0 && ` (${formatPct((holdingsSummary.pnl / holdingsSummary.invested) * 100)})`}
-                </strong>
-              </div>
+
+              <MfAllocationPie rows={holdingRows} />
             </div>
           )}
 

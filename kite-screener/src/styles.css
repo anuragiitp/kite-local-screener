@@ -3594,19 +3594,30 @@ tr.row-drop-target td {
   color: #fff;
 }
 
-.mf-holdings-summary {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
+.mf-holdings-overview {
+  display: flex;
+  align-items: stretch;
+  gap: 12px;
   padding: 10px 12px;
   border-bottom: 1px solid #eef0f6;
+  flex-wrap: wrap;
+}
+
+.mf-holdings-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1 1 200px;
+  min-width: 180px;
 }
 
 .mf-holdings-summary-item {
   display: flex;
   flex-direction: column;
+  justify-content: center;
   gap: 3px;
   min-width: 0;
+  flex: 1;
   padding: 8px 10px;
   border: 1px solid #e2e5ef;
   border-radius: 12px;
@@ -3695,6 +3706,129 @@ tr.row-drop-target td {
 @keyframes mf-refresh-spin {
   from { transform: rotate(0deg); }
   to { transform: rotate(360deg); }
+}
+
+/* ---- MF holdings allocation donut ---- */
+.mf-alloc {
+  margin: 0;
+  padding: 14px 16px;
+  border: 1px solid #e2e5ef;
+  border-radius: 12px;
+  background: #ffffff;
+  box-shadow: 0 4px 14px rgba(16, 24, 40, 0.05);
+  flex: 2 1 340px;
+  min-width: 300px;
+}
+
+.mf-alloc-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.mf-alloc-title {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #57606a;
+}
+
+.mf-alloc-toggle {
+  display: inline-flex;
+  border: 1px solid #d0d7de;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.mf-alloc-tab {
+  padding: 3px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #57606a;
+  background: #ffffff;
+  border: none;
+  cursor: pointer;
+}
+
+.mf-alloc-tab + .mf-alloc-tab {
+  border-left: 1px solid #d0d7de;
+}
+
+.mf-alloc-tab.active {
+  background: #2f6feb;
+  color: #ffffff;
+}
+
+.mf-alloc-body {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+
+.mf-alloc-donut {
+  width: 150px;
+  height: 150px;
+  flex-shrink: 0;
+}
+
+.mf-alloc-center-top {
+  font-size: 22px;
+  font-weight: 700;
+  fill: #24292f;
+}
+
+.mf-alloc-center-sub {
+  font-size: 10px;
+  fill: #8a92a2;
+}
+
+.mf-alloc-legend {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  flex: 1;
+  min-width: 220px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.mf-alloc-legend-item {
+  display: grid;
+  grid-template-columns: 12px 1fr auto auto;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.mf-alloc-swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+.mf-alloc-legend-label {
+  color: #24292f;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mf-alloc-legend-pct {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: #24292f;
+}
+
+.mf-alloc-legend-value {
+  color: #57606a;
+  font-variant-numeric: tabular-nums;
+  min-width: 84px;
+  text-align: right;
 }
 
 /* ---- Mutual fund insights modal ---- */
