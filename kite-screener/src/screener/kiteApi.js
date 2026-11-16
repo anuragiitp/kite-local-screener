@@ -1,7 +1,7 @@
 import { lookupTokenFromScreenerCache, warmScreenerTokenCache } from './screenerTokenCache';
 import { parseInstrumentToken } from './instrumentToken';
 
-const API_URL = '/screener/instruments';
+const API_URL = '/oms/screener/instruments';
 
 export const TARGET_ROWS_DEFAULT = 500;
 // The screener API only honors a page size up to 100. Any `limit` above 100 is
@@ -111,19 +111,23 @@ async function fetchScreenerDirect(body, signal) {
     throw new Error('Login to Kite first, then open https://kite.zerodha.com/local-screener');
   }
 
+  // OMS screener pages by page/per_page and ignores limit/offset.
+  const { limit = BATCH_SIZE, offset = 0, ...rest } = body;
+  const perPage = Math.min(Math.max(1, limit), BATCH_SIZE);
+  const form = { ...rest, per_page: perPage, page: Math.floor(offset / perPage) + 1 };
+
   const response = await fetch(API_URL, {
     method: 'POST',
     credentials: 'include',
     signal,
-    headers: {
-      accept: 'application/json, text/plain, */*',
-      'content-type': 'application/json',
+    headers: authHeaders({
+      'content-type': 'application/x-www-form-urlencoded',
       'x-csrftoken': csrfToken,
       'x-kite-userid': getUserId(),
       'x-kite-app-uuid': getAppUuid(),
       'x-kite-version': '3.0.0',
-    },
-    body: JSON.stringify(body),
+    }),
+    body: new URLSearchParams(form).toString(),
   });
 
   const text = await response.text();
@@ -243,6 +247,25 @@ export async function fetchHoldings(signal) {
   }
 
   return payload?.data || [];
+}
+
+// Mutual fund holdings (one row per folio). Fields as in Kite Connect /mf/holdings:
+// tradingsymbol (ISIN), fund, folio, quantity, average_price, last_price, last_price_date, pnl.
+export async function fetchMfHoldings(signal) {
+  const response = await fetch('/oms/portfolio/holdings/mf', {
+    method: 'GET',
+    credentials: 'include',
+    signal,
+    headers: authHeaders(),
+  });
+
+  const payload = await response.json();
+
+  if (!response.ok || payload?.status !== 'success') {
+    throw new Error(payload?.message || `MF holdings failed with HTTP ${response.status}`);
+  }
+
+  return Array.isArray(payload?.data) ? payload.data : [];
 }
 
 export function buildKiteChartUrl({ exchange = 'NSE', symbol, token }) {
@@ -518,5 +541,5 @@ function extractRows(payload) {
 }
 
 function extractTotal(payload) {
-  return payload?.data?.count || payload?.count || payload?.total || undefined;
+  return payload?.data?.total || payload?.data?.count || payload?.count || payload?.total || undefined;
 }

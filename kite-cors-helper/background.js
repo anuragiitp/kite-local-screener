@@ -1,5 +1,6 @@
 import { buildLocalScreenerRules } from './rules/builder.js';
 import { getInstrumentDumpEntries } from './instrumentDump.js';
+import { getNifty500List, handleStrategyStore } from './strategySupport.js';
 
 
 
@@ -282,6 +283,24 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     }
 
 
+
+    if (message.type === 'getNifty500List') {
+      try {
+        sendResponse({ ok: true, ...(await getNifty500List({ force: Boolean(message.force) })) });
+      } catch (error) {
+        sendResponse({ ok: false, error: error?.message || 'Failed to load Nifty 500 list' });
+      }
+      return;
+    }
+
+    if (message.type === 'strategyStore') {
+      try {
+        sendResponse({ ok: true, ...(await handleStrategyStore(message)) });
+      } catch (error) {
+        sendResponse({ ok: false, error: error?.message || 'Strategy store failed' });
+      }
+      return;
+    }
 
     sendResponse({ ok: false, error: 'Unknown message type' });
 

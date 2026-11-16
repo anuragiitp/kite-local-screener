@@ -15,22 +15,28 @@ import { DASHBOARD_SECTOR } from './presets';
 
 const CACHE_TARGET_ROWS = 3000;
 const FALLBACK_DELAY_MS = 80;
-const STORAGE_BASE_PREFIX = 'kite-screener-token-map-v2-';
+const STORAGE_FAMILY_PREFIX = 'kite-screener-token-map-';
+const STORAGE_BASE_PREFIX = `${STORAGE_FAMILY_PREFIX}v3-`;
 const MIN_PERSISTED_ENTRIES = 100;
+// Screener 52W levels refresh ~07:00 IST; roll the cache day at 07:30 IST (02:00 UTC).
+const SESSION_ROLLOVER_MS = 2 * 60 * 60 * 1000;
 
 let tokenMap = null;
+// instrument_token -> [week_52_high, week_52_low] from the same screener snapshot.
+let levelMap = new Map();
+let cacheDay = null;
 // Symbols the screener could not resolve today. Cached per day so we stop
 // re-issuing blank per-symbol screener lookups on every watchlist load.
 // (Instrument-dump fallback is still attempted for these keys.)
 let missSet = null;
 let loadPromise = null;
 
-function todayKey() {
-  return new Date().toISOString().slice(0, 10);
+function sessionDay() {
+  return new Date(Date.now() - SESSION_ROLLOVER_MS).toISOString().slice(0, 10);
 }
 
 function storageKey() {
-  return `${STORAGE_BASE_PREFIX}${todayKey()}`;
+  return `${STORAGE_BASE_PREFIX}${sessionDay()}`;
 }
 
 function pruneStaleTokenCaches() {
@@ -39,7 +45,7 @@ function pruneStaleTokenCaches() {
     const stale = [];
     for (let i = 0; i < localStorage.length; i += 1) {
       const key = localStorage.key(i);
-      if (key && key.startsWith(STORAGE_BASE_PREFIX) && key !== keep) stale.push(key);
+      if (key && key.startsWith(STORAGE_FAMILY_PREFIX) && key !== keep) stale.push(key);
     }
     stale.forEach((key) => localStorage.removeItem(key));
   } catch {
@@ -65,7 +71,17 @@ function hydrateFromStorage() {
 
     if (next.size < MIN_PERSISTED_ENTRIES) return false;
 
+    const nextLevels = new Map();
+    if (parsed?.levels && typeof parsed.levels === 'object') {
+      Object.entries(parsed.levels).forEach(([token, pair]) => {
+        const levels = validLevels(pair?.[0], pair?.[1]);
+        if (levels && Number(token) > 0) nextLevels.set(Number(token), levels);
+      });
+    }
+
     tokenMap = next;
+    levelMap = nextLevels;
+    cacheDay = sessionDay();
     missSet = new Set(Array.isArray(parsed?.misses) ? parsed.misses.filter(Boolean) : []);
     return true;
   } catch {
@@ -80,13 +96,15 @@ function hydrateFromStorage() {
 
 function persistTokenMap() {
   if (!tokenMap?.size || tokenMap.size < MIN_PERSISTED_ENTRIES) return;
+  if (cacheDay !== sessionDay()) return;
 
   try {
     pruneStaleTokenCaches();
     localStorage.setItem(storageKey(), JSON.stringify({
-      date: todayKey(),
+      date: sessionDay(),
       entries: Object.fromEntries(tokenMap),
       misses: missSet ? [...missSet] : [],
+      levels: Object.fromEntries(levelMap),
     }));
   } catch {
     // quota exceeded — keep in-memory only
@@ -133,6 +151,13 @@ function resolvedEntry(key, token) {
   };
 }
 
+function validLevels(high, low) {
+  const h = Number(high);
+  const l = Number(low);
+  if (!Number.isFinite(h) || !Number.isFinite(l) || h <= 0 || l <= 0 || l > h) return null;
+  return [h, l];
+}
+
 function ingestRow(row) {
   if (!row?.tradingsymbol) return;
   const token = Number(row.instrument_token);
@@ -140,6 +165,15 @@ function ingestRow(row) {
   if (!tokenMap) tokenMap = new Map();
   const segment = row.segment || row.exchange || 'NSE';
   tokenMap.set(rowKey(segment, row.tradingsymbol), token);
+  const levels = validLevels(row.week_52_high, row.week_52_low);
+  if (levels) levelMap.set(token, levels);
+}
+
+/** 52W high/low from today's screener snapshot, or null when unknown or stale. */
+export function lookupWeek52Levels(row) {
+  if (cacheDay !== sessionDay()) return null;
+  const levels = levelMap.get(Number(row?.instrument_token));
+  return levels ? { high: levels[0], low: levels[1] } : null;
 }
 
 /** Sync lookup — returns null if cache not loaded or symbol missing. */
@@ -243,7 +277,7 @@ export async function lookupInstrumentToken(entry, signal) {
 
 /** Prefetch screener universe (market_cap>0) into an in-memory token map. */
 export async function warmScreenerTokenCache(signal) {
-  if (tokenMap) return tokenMap;
+  if (tokenMap && cacheDay === sessionDay()) return tokenMap;
   if (loadPromise) return loadPromise;
 
   loadPromise = (async () => {
@@ -259,7 +293,9 @@ export async function warmScreenerTokenCache(signal) {
         limit: CACHE_TARGET_ROWS,
       });
       const result = await fetchUpToRows(body, { targetRows: CACHE_TARGET_ROWS, signal });
+      levelMap = new Map();
       ingestRows(result.rows);
+      cacheDay = sessionDay();
       if (!missSet) missSet = new Set();
 
       if (tokenMap?.size >= MIN_PERSISTED_ENTRIES) {
@@ -268,6 +304,11 @@ export async function warmScreenerTokenCache(signal) {
     } catch (error) {
       if (error?.name === 'AbortError') throw error;
       // Bulk warm failed — leave tokenMap null/empty; per-symbol fallback still works.
+      if (tokenMap) {
+        // Keep yesterday's tokens, drop its 52W levels, and don't retry the bulk fetch all day.
+        levelMap = new Map();
+        cacheDay = sessionDay();
+      }
     }
 
     return tokenMap;

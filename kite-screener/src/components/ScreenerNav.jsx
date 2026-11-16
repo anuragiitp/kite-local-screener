@@ -6,8 +6,30 @@ import {
   HOLDINGS_SCREENER_ID,
   POSITIONS_SCREENER_ID,
 } from '../screener/presets';
+import { useRef, useState } from 'react';
 import { SCREENERS } from '../screener/presets';
 import { MAX_WATCHLISTS, watchlistScreenerId } from '../screener/watchlists';
+import { exportBackup, importBackup } from '../screener/backup';
+import { STRATEGY_VIEW_ID, SUMMIT_20 } from '../strategy/summitMomentum';
+import { MF_VIEW_ID } from '../screener/mfWatchlist';
+
+async function handleImportFile(event) {
+  const file = event.target.files?.[0];
+  event.target.value = '';
+  if (!file) return;
+
+  const ok = window.confirm(
+    'Restore from this backup? Current watchlists, bookmarks, hidden symbols and settings will be replaced. Paper-trading runs included in the backup also replace the current runs (Undo is available on the strategy page).',
+  );
+  if (!ok) return;
+
+  try {
+    await importBackup(file);
+    window.location.reload();
+  } catch (error) {
+    window.alert(error.message);
+  }
+}
 
 export default function ScreenerNav({
   bookmarkCount,
@@ -24,6 +46,10 @@ export default function ScreenerNav({
   onDeleteWatchlist,
 }) {
   const visible = SCREENERS.filter((screener) => screener.category === activeCategory);
+  const importInputRef = useRef(null);
+  const [screenersOpen, setScreenersOpen] = useState(false);
+  const [strategiesOpen, setStrategiesOpen] = useState(true);
+  const activePreset = SCREENERS.find((screener) => screener.id === activeScreenerId);
 
   return (
     <aside className="screener-nav">
@@ -141,6 +167,24 @@ export default function ScreenerNav({
           </div>
         </div>
 
+        <div className="nav-section nav-section-compact">
+          <div className="wl-header">
+            <span>Mutual Funds</span>
+          </div>
+          <div className="wl-list wl-list-bookmarks">
+            <div className={`wl-item wl-item-fixed${activeScreenerId === MF_VIEW_ID ? ' active' : ''}`}>
+              <button
+                type="button"
+                className="wl-item-main"
+                onClick={() => setActiveScreenerId(MF_VIEW_ID)}
+                title="Your fund list and top returns by category"
+              >
+                <span className="wl-item-name">Fund Screener</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
         <div className="nav-section">
           <div className="wl-header">
             <span>Hidden</span>
@@ -158,42 +202,119 @@ export default function ScreenerNav({
             </div>
           </div>
         </div>
+
+        <div className="nav-section nav-section-compact">
+          <div className="wl-header">
+            <span>Backup</span>
+            <span>
+              <button
+                type="button"
+                className="wl-new"
+                title="Download watchlists, bookmarks, hidden symbols and settings as JSON"
+                onClick={exportBackup}
+              >
+                Export
+              </button>
+              <button
+                type="button"
+                className="wl-new"
+                title="Restore from a backup JSON file"
+                onClick={() => importInputRef.current?.click()}
+              >
+                Import
+              </button>
+            </span>
+            <input
+              ref={importInputRef}
+              type="file"
+              accept="application/json,.json"
+              hidden
+              onChange={handleImportFile}
+            />
+          </div>
+        </div>
       </div>
 
-      <div className="nav-section nav-section-screeners">
-        <div className="wl-header">
+      <div className={`nav-section nav-section-screeners${screenersOpen ? '' : ' collapsed'}`}>
+        <button
+          type="button"
+          className="wl-header nav-collapse-toggle"
+          aria-expanded={screenersOpen}
+          onClick={() => setScreenersOpen((open) => !open)}
+          title={screenersOpen ? 'Collapse screeners' : 'Expand screeners'}
+        >
           <span>Screeners</span>
-        </div>
+          {!screenersOpen && activePreset && (
+            <span className="nav-collapse-active">{activePreset.title}</span>
+          )}
+          <span className="nav-collapse-chevron">{screenersOpen ? '▾' : '▸'}</span>
+        </button>
 
-        <div className="tabs">
-          {CATEGORIES.map((category) => (
-            <button
-              key={category}
-              type="button"
-              className={activeCategory === category ? 'active' : ''}
-              onClick={() => {
-                setActiveCategory(category);
-                setActiveScreenerId(SCREENERS.find((screener) => screener.category === category)?.id);
-              }}
-            >
-              {category}
-            </button>
-          ))}
-        </div>
+        {screenersOpen && (
+          <>
+            <div className="tabs">
+              {CATEGORIES.map((category) => (
+                <button
+                  key={category}
+                  type="button"
+                  className={activeCategory === category ? 'active' : ''}
+                  onClick={() => {
+                    setActiveCategory(category);
+                    setActiveScreenerId(SCREENERS.find((screener) => screener.category === category)?.id);
+                  }}
+                >
+                  {category}
+                </button>
+              ))}
+            </div>
 
-        <div className="preset-list">
-          {visible.map((screener) => (
-            <button
-              key={screener.id}
-              type="button"
-              className={activeScreenerId === screener.id ? 'preset active' : 'preset'}
-              onClick={() => setActiveScreenerId(screener.id)}
-            >
-              <span>{screener.title}</span>
-              <small>{screener.description}</small>
-            </button>
-          ))}
-        </div>
+            <div className="preset-list">
+              {visible.map((screener) => (
+                <button
+                  key={screener.id}
+                  type="button"
+                  className={activeScreenerId === screener.id ? 'preset active' : 'preset'}
+                  onClick={() => setActiveScreenerId(screener.id)}
+                >
+                  <span>{screener.title}</span>
+                  <small>{screener.description}</small>
+                </button>
+              ))}
+            </div>
+          </>
+        )}
+      </div>
+
+      <div className={`nav-section nav-section-strategies${strategiesOpen ? '' : ' collapsed'}`}>
+        <button
+          type="button"
+          className="wl-header nav-collapse-toggle"
+          aria-expanded={strategiesOpen}
+          onClick={() => setStrategiesOpen((open) => !open)}
+          title={strategiesOpen ? 'Collapse strategies' : 'Expand strategies'}
+        >
+          <span>Strategies</span>
+          <span className="nav-collapse-chevron">{strategiesOpen ? '▾' : '▸'}</span>
+        </button>
+
+        {strategiesOpen && (
+          <div className="wl-list wl-list-bookmarks">
+            <div className={`wl-item wl-item-fixed${activeScreenerId === STRATEGY_VIEW_ID ? ' active' : ''}`}>
+              <button
+                type="button"
+                className="wl-item-main"
+                onClick={() => setActiveScreenerId(STRATEGY_VIEW_ID)}
+                title={`${SUMMIT_20.name} — paper trading`}
+              >
+                <span className="wl-item-name">
+                  <span className="strategy-nav-code">{SUMMIT_20.code}</span>
+                  {SUMMIT_20.name}
+                </span>
+                <span className="wl-item-count">paper</span>
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </aside>
   );

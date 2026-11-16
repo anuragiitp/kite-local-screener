@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { DEFAULT_COLUMNS } from '../screener/presets';
 import { bookmarkKey } from '../screener/bookmarks';
+import { getWeek52State } from '../screener/week52';
 import BookmarkSearch from './BookmarkSearch';import MarketCapTag from './MarketCapTag';
 import ScreenerFilters from './ScreenerFilters';
 import SymbolContextMenu from './SymbolContextMenu';
@@ -280,6 +281,7 @@ export default function ScreenerTable({
               const symbol = getSymbol(row) || `row-${index}`;
               const selected = selectedRow === row || getSymbol(selectedRow) === symbol;
               const change = getChangeValue(row);
+              const week52 = getWeek52State(row);
 
               return (
                 <tr
@@ -292,6 +294,7 @@ export default function ScreenerTable({
                   className={[                    selected ? 'selected-row' : '',
                     dragOverIndex === index ? 'row-drop-target' : '',
                     dragFromIndex === index ? 'row-dragging' : '',
+                    week52 ? `w52-row w52-row-${week52.kind}` : '',
                   ].filter(Boolean).join(' ')}
                   onClick={() => onSelectRow(row)}
                   onDragOver={(event) => {
@@ -359,6 +362,11 @@ export default function ScreenerTable({
                                 {getSymbol(row)}
                               </span>
                               <MarketCapTag marketCap={row?.market_cap} />
+                              {week52 && (
+                                <span className={`w52-tag w52-tag-${week52.kind}`} title={week52.title}>
+                                  {week52.label}
+                                </span>
+                              )}
                             </span>
                             {getCompanyName(row) && (
                               <span className="symbol-name">{getCompanyName(row)}</span>

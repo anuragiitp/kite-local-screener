@@ -12,3 +12,6 @@
 # OS / archives
 .DS_Store
 **/*.zip
+
+# Personal app backups (watchlists, notes, strategy ledgers)
+kite-screener-backup-*.json

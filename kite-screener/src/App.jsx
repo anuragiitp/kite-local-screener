@@ -5,6 +5,10 @@ import GlobalFilterBar from './components/GlobalFilterBar';
 import PositionsView from './components/PositionsView';
 import ScreenerNav from './components/ScreenerNav';
 import ScreenerTable from './components/ScreenerTable';
+import StrategyView from './components/StrategyView';
+import { STRATEGY_VIEW_ID } from './strategy/summitMomentum';
+import MfView from './components/MfView';
+import { MF_VIEW_ID } from './screener/mfWatchlist';
 import {
   BATCH_SIZE,
   TARGET_ROWS_DEFAULT,
@@ -147,6 +151,8 @@ function initStorage() {
 }
 
 const TICK_FLUSH_MS = 400;
+const PORTFOLIO_REFRESH_MS = 60_000;
+const EMPTY_PORTFOLIO = { positions: [], holdings: [] };
 
 export default function App() {
   const embedded = isKiteEmbedded();
@@ -159,6 +165,7 @@ export default function App() {
   const [dashboardTokens, setDashboardTokens] = useState([]);
   const [positionsTokens, setPositionsTokens] = useState([]);
   const [portfolioCounts, setPortfolioCounts] = useState({ positionCount: 0, holdingsCount: 0 });
+  const [portfolio, setPortfolio] = useState(EMPTY_PORTFOLIO);
   const [marketCapId, setMarketCapId] = useState('all');
   const [sector, setSector] = useState('');
   const [limit, setLimit] = useState(TARGET_ROWS_DEFAULT);
@@ -184,6 +191,9 @@ export default function App() {
   const mountedRef = useRef(true);
 
   const isDashboardView = activeScreenerId === DASHBOARD_SCREENER_ID;
+  const isMfView = activeScreenerId === MF_VIEW_ID;
+  const isStrategyView = activeScreenerId === STRATEGY_VIEW_ID;
+  const isFullPageView = isStrategyView || isMfView;
   const isPositionsView = activeScreenerId === POSITIONS_SCREENER_ID;
   const isHoldingsView = activeScreenerId === HOLDINGS_SCREENER_ID;
   const isPortfolioView = isPositionsView || isHoldingsView;
@@ -469,7 +479,7 @@ export default function App() {
       positionsTokens.forEach((token) => {
         if (Number.isFinite(token) && token > 0) set.add(token);
       });
-    } else {
+    } else if (!isFullPageView) {
       baseRows.forEach((row) => {
         if (row?.type === 'separator') return;
         const token = Number(row?.instrument_token);
@@ -477,7 +487,7 @@ export default function App() {
       });
     }
     return Array.from(set);
-  }, [baseRows, indexTokensById, isDashboardView, dashboardTokens, isPortfolioView, positionsTokens]);
+  }, [baseRows, indexTokensById, isDashboardView, dashboardTokens, isPortfolioView, positionsTokens, isFullPageView]);
 
   const tokenKey = visibleTokens.join(',');
 
@@ -539,7 +549,7 @@ export default function App() {
       return undefined;
     }
 
-    if (isListView || isDashboardView || isPortfolioView) {
+    if (isListView || isDashboardView || isPortfolioView || isFullPageView) {
       setLoading(false);
       setLoadingMore(false);
       setHasMore(false);
@@ -581,7 +591,7 @@ export default function App() {
       });
 
     return () => controller.abort();
-  }, [embedded, isListView, isDashboardView, isPortfolioView, activeScreener, requestBody, marketCapId, limit, refreshKey]);
+  }, [embedded, isListView, isDashboardView, isPortfolioView, isFullPageView, activeScreener, requestBody, marketCapId, limit, refreshKey]);
 
   const loadMore = useCallback(() => {
     if (isListView || !embedded || !hasSession() || loading || loadingMore || !hasMore) return;
@@ -816,28 +826,44 @@ export default function App() {
   useEffect(() => {
     if (!embedded || !hasSession()) {
       setPortfolioCounts({ positionCount: 0, holdingsCount: 0 });
+      setPortfolio(EMPTY_PORTFOLIO);
       return undefined;
     }
 
-    const controller = new AbortController();
-    Promise.all([
-      fetchPositions(controller.signal),
-      fetchHoldings(controller.signal),
-    ])
-      .then(([{ net }, holdingsData]) => {
-        if (controller.signal.aborted) return;
-        setPortfolioCounts({
-          positionCount: (net || []).length,
-          holdingsCount: filterHoldings((holdingsData || []).map(normalizeHolding)).length,
+    let controller = null;
+    const load = () => {
+      if (controller && document.hidden) return;
+      controller?.abort();
+      const current = new AbortController();
+      controller = current;
+      Promise.all([
+        fetchPositions(current.signal),
+        fetchHoldings(current.signal),
+      ])
+        .then(([{ net }, holdingsData]) => {
+          if (current.signal.aborted) return;
+          const positions = (net || []).map(normalizePosition);
+          const holdings = filterHoldings((holdingsData || []).map(normalizeHolding));
+          setPortfolio({ positions, holdings });
+          setPortfolioCounts({
+            positionCount: positions.length,
+            holdingsCount: holdings.length,
+          });
+        })
+        .catch(() => {
+          if (!current.signal.aborted) {
+            setPortfolioCounts({ positionCount: 0, holdingsCount: 0 });
+            setPortfolio(EMPTY_PORTFOLIO);
+          }
         });
-      })
-      .catch(() => {
-        if (!controller.signal.aborted) {
-          setPortfolioCounts({ positionCount: 0, holdingsCount: 0 });
-        }
-      });
+    };
 
-    return () => controller.abort();
+    load();
+    const timer = setInterval(load, PORTFOLIO_REFRESH_MS);
+    return () => {
+      clearInterval(timer);
+      controller?.abort();
+    };
   }, [embedded, refreshKey]);
 
   const handlePortfolioCounts = useCallback((partial) => {
@@ -851,7 +877,7 @@ export default function App() {
         indexTokensById={indexTokensById}
       />
 
-      <div className={`workspace${isDashboardView ? ' workspace-dashboard' : ''}${isPortfolioView ? ' workspace-portfolio' : ''}`}>
+      <div className={`workspace${isDashboardView || isFullPageView ? ' workspace-dashboard' : ''}${isPortfolioView ? ' workspace-portfolio' : ''}`}>
         <ScreenerNav
           bookmarkCount={bookmarks.length}
           hiddenCount={hiddenSymbols.length}
@@ -867,7 +893,11 @@ export default function App() {
           onDeleteWatchlist={handleDeleteWatchlist}
         />
 
-        {isDashboardView ? (
+        {isMfView ? (
+          <MfView embedded={embedded} />
+        ) : isStrategyView ? (
+          <StrategyView embedded={embedded} />
+        ) : isDashboardView ? (
           <DashboardView
             embedded={embedded}
             marketCapId={marketCapId}
@@ -896,7 +926,7 @@ export default function App() {
               onVisibleTokens={setPositionsTokens}
               onCountsChange={handlePortfolioCounts}
             />
-            <ChartPanel row={selectedRowLive} onInstrumentTokenResolved={persistInstrumentToken} />
+            <ChartPanel row={selectedRowLive} portfolio={portfolio} onInstrumentTokenResolved={persistInstrumentToken} />
           </>
         ) : (
           <>
@@ -940,7 +970,7 @@ export default function App() {
               onRefresh={isListView ? refreshListQuotes : refreshScreenerData}
             />
 
-            <ChartPanel row={selectedRowLive} onInstrumentTokenResolved={persistInstrumentToken} />
+            <ChartPanel row={selectedRowLive} portfolio={portfolio} onInstrumentTokenResolved={persistInstrumentToken} />
           </>
         )}
       </div>

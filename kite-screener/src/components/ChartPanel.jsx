@@ -8,6 +8,7 @@ import OrderTicket from './OrderTicket';
 import AlertTicket from './AlertTicket';
 import FundamentalsModal, { buildStreakTechnicalsUrl, buildTijoriFundamentalsUrl } from './FundamentalsModal';
 import TrendPanel from './TrendPanel';
+import PortfolioCard from './PortfolioCard';
 
 const INTRADAY_RANGES = new Set(['1D', '5D']);
 
@@ -104,7 +105,7 @@ function writeAlertOpen(open) {
   }
 }
 
-export default function ChartPanel({ row, onInstrumentTokenResolved }) {
+export default function ChartPanel({ row, portfolio, onInstrumentTokenResolved }) {
   const symbol = getSymbol(row);
   const exchange = row?.exchange || row?.segment || 'NSE';
   // Keep a live reference so fetch effects can read row data without re-running
@@ -342,12 +343,15 @@ export default function ChartPanel({ row, onInstrumentTokenResolved }) {
                 : null
             }
           />
-          <TrendPanel
-            row={detailRow}
-            candles={dailyCandles}
-            loading={dailyLoading}
-            athInfo={athInfo}
-          />
+          <div className="symbol-detail-stack">
+            <TrendPanel
+              row={detailRow}
+              candles={dailyCandles}
+              loading={dailyLoading}
+              athInfo={athInfo}
+            />
+            <PortfolioCard symbol={symbol} row={detailRow} portfolio={portfolio} />
+          </div>
           {symbol && chartToken && isOrderableExchange(exchange) && (
             alertOpen ? (
               <AlertTicket

@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import IndexTicker from './IndexTicker';
+import NotesDrawer from './NotesDrawer';
 
 function formatClock(date) {
   return date.toLocaleTimeString('en-IN', {
@@ -15,6 +16,8 @@ export default function GlobalFilterBar({
   indexTokensById = {},
 }) {
   const [now, setNow] = useState(() => new Date());
+  const [notesOpen, setNotesOpen] = useState(false);
+  const closeNotes = useCallback(() => setNotesOpen(false), []);
 
   useEffect(() => {
     const id = setInterval(() => setNow(new Date()), 1000);
@@ -22,14 +25,27 @@ export default function GlobalFilterBar({
   }, []);
 
   return (
-    <header className="global-bar">
-      <IndexTicker
-        liveTicks={indexLiveTicks}
-        tokensById={indexTokensById}
-      />
-      <time className="header-clock" dateTime={now.toISOString()}>
-        {formatClock(now)}
-      </time>
-    </header>
+    <>
+      <header className="global-bar">
+        <IndexTicker
+          liveTicks={indexLiveTicks}
+          tokensById={indexTokensById}
+        />
+        <button
+          type="button"
+          className={`header-notes-btn${notesOpen ? ' active' : ''}`}
+          onClick={() => setNotesOpen((v) => !v)}
+          aria-expanded={notesOpen}
+          title="Notes"
+        >
+          Notes
+        </button>
+        <time className="header-clock" dateTime={now.toISOString()}>
+          {formatClock(now)}
+        </time>
+      </header>
+      {/* Outside the header: its backdrop-filter would trap the fixed-position drawer. */}
+      <NotesDrawer open={notesOpen} onClose={closeNotes} />
+    </>
   );
 }

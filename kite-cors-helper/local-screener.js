@@ -60,6 +60,26 @@ if (!location.pathname.startsWith('/local-screener')) {
 
 
 
+    if (data.type === 'getNifty500List' || data.type === 'strategyStore') {
+      const request = data.type === 'getNifty500List'
+        ? { type: 'getNifty500List', force: Boolean(data.force) }
+        : { type: 'strategyStore', op: data.op, key: data.key, value: data.value };
+      chrome.runtime.sendMessage(request, (response) => {
+        window.postMessage(
+          {
+            ...(response || {}),
+            source: 'kite-screener-bridge',
+            type: data.type === 'getNifty500List' ? 'nifty500List' : 'strategyStoreResult',
+            id: data.id,
+            ok: Boolean(response?.ok),
+            error: response?.error || (chrome.runtime.lastError?.message ?? ''),
+          },
+          '*',
+        );
+      });
+      return;
+    }
+
     if (data.type === 'getInstrumentDump') {
 
       chrome.runtime.sendMessage({ type: 'getInstrumentDump' }, (response) => {
